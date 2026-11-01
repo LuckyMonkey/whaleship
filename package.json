@@ -1,2 +1,15 @@
-{ "name": "whaleship2", "version": "0.5.0", "private": true, "main": "server.js", "license": "UNLICENSED",
-  "dependencies": { "ws": "8.18.3" }, "engines": { "node": ">=22" } }
+{
+  "name": "whaleship",
+  "version": "0.17.0",
+  "private": true,
+  "main": "server.js",
+  "license": "MIT",
+  "dependencies": {
+    "web-push": "3.6.7",
+    "ws": "8.18.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Battleship where the ships are infrastructure \u2014 a browser game."
+}

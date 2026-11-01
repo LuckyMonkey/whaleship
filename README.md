@@ -6,7 +6,8 @@
 
 - **Play in a browser** on a phone or desktop. No install, no account.
 - **Solo** against three AI captains, or **send a friend a link** (or a QR code) and they're in.
-- **Asynchronous**: no time limits, games persist across restarts, play several at once, and get desktop notifications when it's your move.
+- **Asynchronous**: no time limits, games persist across restarts, play several at once, and get **push notifications** (Web Push, even with the game closed) when it's your move.
+- **Sign in once, play anywhere** (optional single sign-on): your games follow your account to your phone. Installable to the home screen.
 - **Sector targeting**: 36 sectors (`A`–`Z`, `0`–`9`) of 3×3. Type `J5 B3 Q9 ⏎` on a keyboard, or just tap the map on a phone.
 - **Infrastructure roles**: each vessel powers abilities. Sink their Docker host and they lose Tail Slap; sink their proxy and your scans stop being masked.
 - **Specials with real shapes**: T-shaped Tail Slap, + Breach, L Tentacle Grab, diamond Packet Flood, sector Port Scan, Traceroute, OOM Kill, DNS Poison decoys and Restore from backup.
@@ -46,6 +47,8 @@ Run the tests with `node --test test/`. They start a throwaway server on a rando
 | `WEB_ROOT` | `./web` | the static client |
 | `ALLOWED_ORIGINS` | *(any)* | comma-separated origins allowed to open the WebSocket. Set this in production, e.g. `https://games.example.com` |
 | `INVITE_BASE` | the page's own URL | base for invite links, e.g. `https://example.com/whaleship` |
+| `LOGIN_URL` | *(off)* | shows a **Sign in** button: the game's path is appended, e.g. `https://example.com/login/?next=` |
+| `VAPID_SUBJECT` | `https://github.com/whaleship` | contact URL/mailto sent to push services with Web Push requests (VAPID keys are generated into `DATA_DIR/vapid.json` on first start) |
 | `MAX_ACTIVE` | `400` | cap on unfinished matches |
 | `FORFEIT_AFTER` | `604800` | seconds of opponent silence before you can claim the win |
 | `AUTH_BRIDGE`, `AUTH_SECRET`, `AUTH_COOKIE` | *(off)* | optional single sign-on: the server forwards the named cookie to `AUTH_BRIDGE` (with `X-Whaleship-Auth: AUTH_SECRET`) and expects `{sub, name}` back. Without it, players are guests identified by a random cookie. |

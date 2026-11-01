@@ -153,7 +153,7 @@ function showMenu() { state = null; active = null; queue = []; hidden.home.clear
 
 function connect() {
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/whaleship/ws`);
-  socket.onopen = () => { connected = true; retries = 0; render(); setTimeout(pollGames, 600); };
+  socket.onopen = () => { connected = true; retries = 0; render(); setTimeout(pollGames, 600); setTimeout(registerPush, 1200); };
   socket.onclose = () => { connected = false; pending = false; render(); setTimeout(connect, Math.min(15000, 750 * 2 ** retries++)); };
   socket.onerror = () => {};
   socket.onmessage = e => {
@@ -166,6 +166,8 @@ function connect() {
       return;
     }
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
+    if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
+    if (msg.type === 'PUSH_OK') { pushActive = true; return; }
     if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game ended.'); return; }
     pending = false;
     if (msg.error) {
@@ -237,7 +239,36 @@ function rememberMatch() {
 }
 /* ---------------- my games: play several at once ---------------- */
 const games = new Map();   // id → server status (only for matches this browser holds a seat in)
-function pollGames() { if (!connected || document.hidden) return; const list = Object.entries(seatKeys).slice(-30).map(([session, credential]) => ({session, credential})); if (list.length) raw({type: 'LIST_MATCHES', matches: list}); }
+function pollGames() { if (!connected || document.hidden) return; const list = Object.entries(seatKeys).slice(-30).map(([session, credential]) => ({session, credential})); if (list.length) raw({type: 'LIST_MATCHES', matches: list}); if (profile.authenticated) raw({type: 'MY_MATCHES'}); }
+// Signed in: your games follow your account to every device. On a fresh device, open the one waiting on you.
+let resumedFromAccount = false;
+function onMyMatches(list) {
+  for (const g of list) { g.account = true; const prev = games.get(g.id); games.set(g.id, {...prev, ...g}); }
+  onMatchList([...games.values()].filter(g => g.account || seatKeys[g.id]));
+  if (!resumedFromAccount && !state && !invitation(location.href)) {
+    resumedFromAccount = true;
+    const open = list.filter(g => g.phase !== 'finished'), pick = open.find(g => g.myTurn) || open[0];
+    if (pick && !seatKeys[pick.id]) { toast(`Welcome back, ${profile.name} — resuming your game vs ${pick.opponent || 'the AI'}${open.length > 1 ? ` (${open.length - 1} more in 🗂 Games)` : ''}.`); switchGame(pick.id); }
+  }
+}
+// Web Push: ask at a natural moment (a gesture in a friend game), then register the service worker and subscribe.
+let pushActive = false;
+function urlB64(s) { const p = '='.repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function registerPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !profile.pushKey || Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js', {scope: './'}); await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: urlB64(profile.pushKey)});
+    raw({type: 'PUSH_SUBSCRIBE', subscription: sub.toJSON()});
+  } catch (e) { console.warn('push unavailable', e); }
+}
+async function maybeAskNotify() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try { const t = Number(localStorage.getItem('whaleship:asked-notify') || 0); if (Date.now() - t < 7 * 864e5) return; localStorage.setItem('whaleship:asked-notify', String(Date.now())); } catch {}
+  const p = await Notification.requestPermission().catch(() => 'default');
+  if (p === 'granted') { toast('🔔 We’ll ping you when it’s your move — even with WHALESHIP closed.'); registerPush(); }
+}
+navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open-match') { const id = fromShort(e.data.match || ''); if (id && id !== state?.id) switchGame(id); } });
 setInterval(pollGames, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) pollGames(); });
 function onMatchList(list) {
   const seenIds = new Set();
@@ -254,7 +285,7 @@ function onMatchList(list) {
 }
 function alertGame(id, title, body) {
   audio.sound('turn'); toast(`${title} · open 🗂 Games to switch`);
-  if ('Notification' in window && Notification.permission === 'granted') { try { const n = new Notification(title, {body, tag: 'whaleship-' + id}); n.onclick = () => { window.focus(); switchGame(id); n.close(); }; } catch {} }
+  if (!pushActive && 'Notification' in window && Notification.permission === 'granted') { try { const n = new Notification(title, {body, tag: 'whaleship-' + id}); n.onclick = () => { window.focus(); switchGame(id); n.close(); }; } catch {} }
 }
 function forgetGame(id) {
   delete seatKeys[id]; games.delete(id); const m = matches(); delete m[id]; try { localStorage.setItem('whaleship:matches', JSON.stringify(m)); } catch {}
@@ -274,9 +305,15 @@ function paintGames() {
   renderTitle();
   if ($('#new-dialog').open) renderGameList();
 }
+function signInHref() { return profile.loginUrl ? profile.loginUrl + encodeURIComponent(location.pathname) : ''; }   // the host's login accepts a plain path; your account finds your games after
+function paintAccount() {
+  const href = signInHref();
+  for (const a of document.querySelectorAll('.signin-link')) { a.href = href; a.hidden = !href; }
+  $('#account-line').textContent = profile.authenticated ? `Signed in as ${profile.name} · your games follow you to any device` : href ? 'Guest captain · sign in to play from any device and keep your games' : '';
+}
 function renderGameList() {
   const list = $('#recent'); list.replaceChildren();
-  const local = matches(), ids = [...new Set([...games.keys(), ...Object.keys(local)])].filter(id => seatKeys[id]);
+  const local = matches(), ids = [...new Set([...games.keys(), ...Object.keys(local)])].filter(id => seatKeys[id] || games.get(id)?.account);
   const rows = ids.map(id => ({id, g: games.get(id), l: local[id] || {}})).filter(r => r.g || r.l.phase !== 'finished')
     .sort((a, b) => (b.g?.myTurn ? 1 : 0) - (a.g?.myTurn ? 1 : 0) || (b.l.t || 0) - (a.l.t || 0));
   for (const {id, g, l} of rows) {
@@ -295,6 +332,7 @@ function renderGameList() {
   }
   $('#recent-wrap').hidden = !rows.length;
   $('#notify-wrap').hidden = !('Notification' in window) || Notification.permission !== 'default';
+  paintAccount();
 }
 function paintSizes() { document.querySelectorAll('[data-size]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === chosenSize))); }
 function openNewGame() { renderGameList(); paintSizes(); $('#new-dialog').showModal(); pollGames(); }
@@ -700,6 +738,7 @@ function aimAt(c) {
 }
 function fireVolley() {
   if (!myTurn() || !targets.size) return;
+  if (state.mode === 'multiplayer') maybeAskNotify();
   const cells = [...targets]; targets.clear(); sel = -1;
   prompt(`ping -c1 ${cells.map(c => lc(c)).join(' ')}`);
   act('FIRE', {cells}); cells.forEach(c => locked.add(c)); drawPlane(); setTimeout(() => { cells.forEach(c => locked.delete(c)); drawPlane(); }, 1500);
@@ -1238,7 +1277,7 @@ function renderResult() {
 function render() { renderBoard(); paintBanner(); renderHud(); renderTitle(); renderWatch(); renderResult(); }
 
 /* ---------------- notifications ---------------- */
-function notify(title, body) { if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return; try { const n = new Notification(title, {body, tag: 'whaleship'}); n.onclick = () => { window.focus(); n.close(); }; } catch {} }
+function notify(title, body) { if (pushActive || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return; try { const n = new Notification(title, {body, tag: 'whaleship'}); n.onclick = () => { window.focus(); n.close(); }; } catch {} }
 
 /* ---------------- terminal (second screen) ---------------- */
 function openTerminal(open) { document.body.classList.toggle('term-open', open); $('#to-terminal').setAttribute('aria-expanded', String(open)); if (open) { watchSig = ''; renderWatch(); scrollTerm(); if (matchMedia('(pointer:fine)').matches) setTimeout(() => $('#command').focus({preventScroll: true}), 380); } }
@@ -1296,14 +1335,14 @@ async function share(url, text) { if (navigator.share && coarse()) { try { await
 function pickSize(n) { chosenSize = n; try { localStorage.setItem('whaleship:size8', String(n)); } catch {} if (!state) { setSize(n); autoZoom(); } paintSizes(); render(); }
 document.querySelectorAll('[data-size]').forEach(b => b.onclick = () => pickSize(Number(b.dataset.size)));
 $('#cta-solo').onclick = () => newGame($('#difficulty').value);
-$('#cta-friend').onclick = () => newGame('multiplayer');
+$('#cta-friend').onclick = () => { maybeAskNotify(); newGame('multiplayer'); };
 $('#cta-invite').onclick = () => openShare();
 $('#share-copy').onclick = () => { copy($('#share-url').value, 'Link copied — send it! 🚀'); $('#share-url').select(); };
 $('#share-native').onclick = async () => { try { await navigator.share({title: 'WHALESHIP', text: 'Battle me in WHALESHIP 🐋📡 — tap to play:', url: $('#share-url').value}); } catch {} };
 $('#share-url').onclick = () => $('#share-url').select();
 $('#new-game').onclick = () => openNewGame(); $('#games-btn').onclick = () => openNewGame();
 $('#end-btn').onclick = () => { if (!state || state.phase === 'finished') return; $('#leave-warning').textContent = state.phase === 'playing' ? 'End this game now? It counts as a forfeit — your opponent wins.' : 'Close this game? Nobody has started playing yet.'; $('#leave-dialog').showModal(); };
-$('#notify-enable').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 Desktop notifications on — we’ll tell you when it’s your move in any game.' : 'Notifications stay off. The 🗂 badge and tab title still show waiting games.'); } catch {} renderGameList(); };
+$('#notify-enable').onclick = async () => { try { const p = await Notification.requestPermission(); if (p === 'granted') registerPush(); toast(p === 'granted' ? '🔔 Notifications on — we’ll tell you when it’s your move in any game, even with WHALESHIP closed.' : 'Notifications stay off. The 🗂 badge and tab title still show waiting games.'); } catch {} renderGameList(); };
 document.querySelectorAll('#new-dialog [data-mode]').forEach(b => b.onclick = () => { $('#new-dialog').close(); $('#result-overlay').hidden = true; openTerminal(false); newGame(b.dataset.mode, chosenSize); });
 $('#cta-shuffle').onclick = () => { held = null; act('RANDOMIZE_FLEET'); audio.sound('place'); };
 $('#cta-ready').onclick = () => act('READY');
@@ -1376,8 +1415,10 @@ paintSound(); setSize(chosenSize); buildBoardEvents(); zoomGestures(); prefs.app
 log(`Last login: ${new Date().toString().slice(0, 24)} on ttys001\nWhaleOS (moby) — infrastructure battleship\n\n * Your fleet is a stack: moby=docker host · k8s=orchestrator · walrus=storage · tux=linux host · squid=proxy\n * Fire:  ping q5      Specials:  nmap q5 · hping3 q5 · traceroute q5      How to play: the ? button\n * Type help. Nothing here runs on a real host.\n`);
 setInterval(lifeTick, 850); setInterval(critterTick, 3000); setTimeout(critterTick, 700);
 try {
-  const r = await fetch('./api/profile'); if (!r.ok) throw Error(); profile = await r.json();
+  const r = await fetch('./api/profile'); if (!r.ok) throw Error(); profile = await r.json(); paintAccount();
   try { seatKeys = JSON.parse(localStorage.getItem('whaleship:seats:' + profile.identity) || '{}'); active = localStorage.getItem('whaleship:active:' + profile.identity); } catch {}
+  // keys from any identity this browser has used (e.g. you played as a guest, then signed in) still open those seats
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('whaleship:seats:') && k !== 'whaleship:seats:' + profile.identity) Object.assign(seatKeys, {...JSON.parse(localStorage.getItem(k) || '{}'), ...seatKeys}); if (!active && k.startsWith('whaleship:active:')) active = localStorage.getItem(k); } } catch {}
   try { if (localStorage.getItem('whaleship:gen') !== GEN) { localStorage.setItem('whaleship:gen', GEN); if (active) toast(`WHALESHIP ${GEN} — fresh start. Your earlier games are under ＋.`); active = null; saveSession(); } } catch {}
   connect();
 } catch { toast('Could not reach the harbor. Reload to try again.'); $('#status').textContent = '○ harbor offline'; }

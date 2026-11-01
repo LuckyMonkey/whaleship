@@ -8,6 +8,7 @@ WHALESHIP itself is MIT-licensed (see `LICENSE`). It includes or derives from:
 | [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 1.4.4 | `web/src/vendor/qrcode.min.js` | MIT — Copyright © 2009 Kazuhiko Arase |
 | Container-name word lists from [Moby](https://github.com/moby/moby) `pkg/namesgenerator` (v27.5.1) | `names.js` | Apache License 2.0 — Copyright © Docker, Inc. The adjective/surname lists are copied unmodified; the generator code around them is original. |
 | [ws](https://github.com/websockets/ws) | npm dependency (not vendored) | MIT |
+| [web-push](https://github.com/web-push-libs/web-push) | npm dependency (not vendored) | MPL-2.0 |
 
 The Apache-2.0 license text is available at https://www.apache.org/licenses/LICENSE-2.0.
 

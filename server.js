@@ -16,7 +16,8 @@ const BASE = '/whaleship';
 const AUTH_BRIDGE = process.env.AUTH_BRIDGE || '';
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
 const AUTH_COOKIE = process.env.AUTH_COOKIE || 'session';   // cookie forwarded to the optional identity bridge
-const INVITE_BASE = process.env.INVITE_BASE || '';           // e.g. https://example.com/whaleship — defaults to the page's own URL
+const INVITE_BASE = process.env.INVITE_BASE || '';
+const LOGIN_URL = process.env.LOGIN_URL || '';               // e.g. https://example.com/login/?next= — shows a Sign in button           // e.g. https://example.com/whaleship — defaults to the page's own URL
 const ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 const MAX_ACTIVE = Number(process.env.MAX_ACTIVE || 400);
 const FORFEIT_AFTER = Number(process.env.FORFEIT_AFTER || 7 * 24 * 3600);     // opponent silent this long → you may claim
@@ -214,7 +215,7 @@ function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); 
 function broadcast(m, type, extra = {}) {
   for (const ws of sockets.get(m.id) || []) if (ws.seat != null) send(ws, { type, state: view(m, ws.seat), ...extra });
 }
-function bump(m, type) { m.revision++; persist(m); broadcast(m, type); }
+function bump(m, type) { m.revision++; m.updated = Math.floor(now() / 1000); persist(m); broadcast(m, type); }
 function attach(ws, m, seat) {
   if (ws.matchId && ws.matchId !== m.id) detach(ws);
   ws.matchId = m.id; ws.seat = seat;
@@ -239,7 +240,8 @@ function newSeat(identity, name, m, ai = null) {
   if (warfare(m)) Object.assign(seat, { charges: Object.fromEntries(Object.entries(SPECIALS).filter(([, sp]) => sp.charges).map(([k, sp]) => [k, sp.charges[size]])), cool: {}, decoys: [], frozen: 0 });
   return seat;
 }
-function issue(seat) { const cred = rid(24); seat.credHash = sha(cred); return cred; }
+function issue(seat) { const cred = rid(24), h = sha(cred); seat.credHash = h; seat.credHashes = [...(seat.credHashes || []).filter(x => x !== h), h].slice(-6); return cred; }
+const credOk = (seat, cred) => !!seat && !!cred && (seat.credHash === sha(String(cred)) || (seat.credHashes || []).includes(sha(String(cred))));
 function createMatch(ws, msg) {
   if ([...matches.values()].filter(m => m.phase !== 'finished').length >= MAX_ACTIVE) return send(ws, { error: 'The harbor is full right now. Try again soon.' });
   const mode = ['multiplayer', 'easy', 'normal', 'hard'].includes(msg.mode) ? msg.mode : 'normal';
@@ -261,10 +263,12 @@ function joinMatch(ws, msg, resume) {
   const m = matches.get(String(msg.session || ''));
   if (!m) return send(ws, { error: 'That match is no longer running.' });
   let seat = -1;
-  if (resume && msg.credential) seat = m.seats.findIndex(s => s && s.credHash === sha(msg.credential));
+  if (resume && msg.credential) seat = m.seats.findIndex(s => credOk(s, msg.credential));
   if (seat < 0) seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity);       // same captain, new device/tab
   if (seat >= 0) {
-    const cred = msg.credential && m.seats[seat].credHash === sha(msg.credential) ? msg.credential : issue(m.seats[seat]);
+    // you proved the seat with its key and you're signed in now: the guest seat moves onto your account (so it follows you)
+    if (ws.authed && credOk(m.seats[seat], msg.credential) && String(m.seats[seat].identity).startsWith('guest:')) { m.seats[seat].identity = ws.identity; m.seats[seat].name = ws.name; }
+    const cred = credOk(m.seats[seat], msg.credential) ? msg.credential : issue(m.seats[seat]);
     attach(ws, m, seat); persist(m);
     send(ws, { type: 'MATCH_RESUMED', state: view(m, seat), credential: cred });
     return broadcast(m, 'PRESENCE');
@@ -274,7 +278,7 @@ function joinMatch(ws, msg, resume) {
   m.phase = 'deploy';
   const cred = issue(m.seats[1]); attach(ws, m, 1);
   m.revision++; persist(m);
-  send(ws, { type: 'PLAYER_JOINED', state: view(m, 1), credential: cred });
+  send(ws, { type: 'PLAYER_JOINED', state: view(m, 1), credential: cred }); notifyMatch(m, { phase: 'lobby', turn: m.turn, opp: false });
   for (const o of sockets.get(m.id) || []) if (o !== ws) send(o, { type: 'PLAYER_JOINED', state: view(m, o.seat) });
 }
 // Status of every match this browser holds a seat in (proved by its seat credential), without attaching to them —
@@ -282,7 +286,7 @@ function joinMatch(ws, msg, resume) {
 function listMatches(ws, msg) {
   const list = (Array.isArray(msg.matches) ? msg.matches : []).slice(0, 30).map(x => {
     const m = matches.get(String(x && x.session || '')); if (!m || !x.credential) return null;
-    const seat = m.seats.findIndex(s => s && s.credHash === sha(String(x.credential))); if (seat < 0) return null;
+    const seat = m.seats.findIndex(s => credOk(s, x.credential)); if (seat < 0) return null;
     const op = m.seats[1 - seat];
     return { id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
       opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision };
@@ -293,11 +297,63 @@ function listMatches(ws, msg) {
 function endMatch(ws, msg) {
   const m = matches.get(String(msg.session || ''));
   if (!m) return send(ws, { type: 'MATCH_ENDED', session: String(msg.session || ''), gone: true });
-  const seat = m.seats.findIndex(s => s && s.credHash === sha(String(msg.credential || '')));
+  let seat = m.seats.findIndex(s => credOk(s, msg.credential));
+  if (seat < 0 && ws.authed) seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity);   // signed-in: your account owns the seat
   if (seat < 0) return send(ws, { error: 'That isn’t your game.' });
-  if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); }
+  if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); notifyMatch(m, { phase: 'playing', turn: m.turn, opp: true }); }
   else if (m.phase !== 'finished') { m.phase = 'finished'; m.finished = Math.floor(now() / 1000); m.reason = 'closed'; m.revision++; persist(m); for (const o of sockets.get(m.id) || []) send(o, { type: 'MATCH_CLOSED' }); }
   send(ws, { type: 'MATCH_ENDED', session: m.id, result: m.reason });
+}
+// Signed-in players (fridge.run account) can find their games from any device; guests only see what this browser holds.
+function myMatches(ws) {
+  if (!ws.authed) return send(ws, { type: 'MY_MATCHES', matches: [] });
+  const recent = now() / 1000 - 2 * 86400, list = [];
+  for (const m of matches.values()) {
+    const seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity); if (seat < 0) continue;
+    if (m.phase === 'finished' && (m.reason === 'closed' || (m.finished || 0) < recent)) continue;
+    const op = m.seats[1 - seat];
+    list.push({ id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
+      opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision, updated: m.updated || m.created });
+  }
+  send(ws, { type: 'MY_MATCHES', matches: list.sort((a, b) => b.updated - a.updated).slice(0, 30) });
+}
+
+/* ---------------- Web Push: "your move" reaches you even when WHALESHIP is closed ---------------- */
+const webpush = require('web-push');
+const PUSH_FILE = path.join(DATA, 'push.json'), VAPID_FILE = path.join(DATA, 'vapid.json');
+let vapid = null, pushSubs = {};
+try { vapid = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf8')); } catch { vapid = webpush.generateVAPIDKeys(); try { fs.writeFileSync(VAPID_FILE, JSON.stringify(vapid), { mode: 0o600 }); } catch (e) { console.error('vapid', e.message); } }
+try { pushSubs = JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')); } catch {}
+webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'https://github.com/whaleship', vapid.publicKey, vapid.privateKey);
+let pushSaveT = null;
+function savePush() { clearTimeout(pushSaveT); pushSaveT = setTimeout(() => { try { fs.writeFileSync(PUSH_FILE + '.tmp', JSON.stringify(pushSubs)); fs.renameSync(PUSH_FILE + '.tmp', PUSH_FILE); } catch (e) { console.error('push save', e.message); } }, 200); }
+function pushSubscribe(ws, msg) {
+  const sub = msg.subscription;
+  if (!sub || typeof sub.endpoint !== 'string' || !/^https:\/\//.test(sub.endpoint) || !sub.keys || typeof sub.keys.p256dh !== 'string' || typeof sub.keys.auth !== 'string' || sub.endpoint.length > 1024) return send(ws, { error: 'Bad push subscription.' });
+  const list = (pushSubs[ws.identity] || []).filter(x => x.endpoint !== sub.endpoint);
+  list.push({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, t: now() });
+  pushSubs[ws.identity] = list.slice(-5); savePush();     // up to 5 devices per player
+  send(ws, { type: 'PUSH_OK' });
+}
+function pushTo(identity, payload) {
+  for (const sub of pushSubs[identity] || []) {
+    webpush.sendNotification(sub, JSON.stringify(payload), { TTL: 86400, urgency: 'high', topic: String(payload.tag || '').slice(0, 32).replace(/[^A-Za-z0-9_-]/g, '') || undefined })
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) { pushSubs[identity] = (pushSubs[identity] || []).filter(x => x.endpoint !== sub.endpoint); savePush(); } else console.error('push', e.statusCode || e.message); });
+  }
+}
+const shortId = hex => Buffer.from(hex, 'hex').toString('base64url');
+const gameLink = m => `${INVITE_BASE || ''}?j=${shortId(m.id)}`;
+// After every change in a friend match: tell whoever should act next (the server is the only one that knows).
+function notifyMatch(m, before) {
+  if (m.mode !== 'multiplayer') return;
+  const human = s => m.seats[s] && !m.seats[s].ai;
+  if (m.phase === 'playing' && (before.phase !== 'playing' || before.turn !== m.turn) && human(m.turn)) {
+    const op = m.seats[1 - m.turn];
+    pushTo(m.seats[m.turn].identity, { title: before.phase !== 'playing' ? `⚓ Battle on vs ${op?.name || 'your friend'}` : `🟢 Your move vs ${op?.name || 'your friend'}`,
+      body: before.phase !== 'playing' ? 'Both fleets are deployed — fire away.' : `Turn ${m.turn_number}. They fired — your move, captain.`, tag: m.id, url: gameLink(m), match: shortId(m.id) });
+  }
+  if (!before.opp && m.seats[1] && human(0)) pushTo(m.seats[0].identity, { title: `🤝 ${m.seats[1].name} joined your battle`, body: 'Their fleet is deploying.', tag: m.id, url: gameLink(m), match: shortId(m.id) });
+  if (m.phase === 'finished' && before.phase !== 'finished') for (const s of [0, 1]) if (human(s)) pushTo(m.seats[s].identity, { title: m.winner === s ? '🏆 You won' : '💀 It works on my machine.', body: `vs ${m.seats[1 - s]?.name || 'your opponent'} · ${m.turn_number} turns`, tag: m.id, url: gameLink(m), match: shortId(m.id) });
 }
 function legalPlacement(m, seat, shipId, cells) {
   if (!cells) return false;
@@ -488,9 +544,11 @@ function handle(ws, raw) {
   if (msg.type === 'RESUME_MATCH') return joinMatch(ws, msg, true);
   if (msg.type === 'LIST_MATCHES') return listMatches(ws, msg);
   if (msg.type === 'END_MATCH') return endMatch(ws, msg);
+  if (msg.type === 'MY_MATCHES') return myMatches(ws);
+  if (msg.type === 'PUSH_SUBSCRIBE') return pushSubscribe(ws, msg);
   const m = matches.get(ws.matchId);
   if (!m || ws.seat == null || msg.session !== m.id) return send(ws, { error: 'Not in a match.' });
-  const s = ws.seat, me = m.seats[s];
+  const s = ws.seat, me = m.seats[s], before = { phase: m.phase, turn: m.turn, opp: !!m.seats[1] };
   if (msg.action_id) { if (me.recent.includes(msg.action_id)) return; me.recent.push(msg.action_id); if (me.recent.length > 40) me.recent.shift(); }
   let err = null, type = 'STATE';
   switch (msg.type) {
@@ -519,7 +577,7 @@ function handle(ws, raw) {
     default: err = 'Unknown command.';
   }
   if (err) return send(ws, { error: err });
-  bump(m, type);
+  bump(m, type); notifyMatch(m, before);
 }
 
 /* ---------------- identity (guest cookie or Fridge account) ---------------- */
@@ -547,7 +605,7 @@ async function identify(req) {
 }
 
 /* ---------------- HTTP: API + static client ---------------- */
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+const TYPES = { '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 function json(res, code, obj, headers = {}) { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); }
 // BUILD is stamped into web/BUILD at deploy; asset URLs carry ?v=BUILD so caches (browser + Cloudflare) can never mix versions
 const BUILD = (() => { try { return fs.readFileSync(path.join(WEB, 'BUILD'), 'utf8').trim(); } catch { return 'dev'; } })();
@@ -558,7 +616,7 @@ const server = http.createServer(async (req, res) => {
     if (!url.pathname.startsWith(BASE)) { res.writeHead(404); return res.end(); }
     const p = url.pathname.slice(BASE.length) || '/';
     if (p === '') { res.writeHead(301, { Location: BASE + '/' + url.search }); return res.end(); }
-    if (p === '/api/profile') { const id = await identify(req); return json(res, 200, { name: id.name, authenticated: id.authed, identity: id.pub, inviteBase: INVITE_BASE }, id.setCookie ? { 'Set-Cookie': id.setCookie } : {}); }
+    if (p === '/api/profile') { const id = await identify(req); return json(res, 200, { name: id.name, authenticated: id.authed, identity: id.pub, inviteBase: INVITE_BASE, loginUrl: id.authed ? '' : LOGIN_URL, pushKey: vapid.publicKey }, id.setCookie ? { 'Set-Cookie': id.setCookie } : {}); }
     if (p === '/api/metrics') { const active = [...matches.values()].filter(m => m.phase !== 'finished').length; return json(res, 200, { status: 'operational', infrastructure: { active_workers: active, max_workers: MAX_ACTIVE, backend: 'whaleship2', restarts: 0 } }); }
     if (p === '/api/leaderboard') return json(res, 200, leaderboard(['multiplayer', 'easy', 'normal', 'hard'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'multiplayer', url.searchParams.get('period')));
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }

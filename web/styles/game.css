@@ -427,3 +427,10 @@ body:not(.term-watch) .pane-watch{display:none}
 .recent-end{min-width:46px;padding:0 10px;border:1px solid #ff754f66;border-radius:10px;background:#2a1210;color:#ffb19c;font:800 .8rem var(--mono);cursor:pointer}
 .recent-end[data-armed]{background:#c8352b;color:#fff;border-color:#ff754f}
 .icon.end{border-color:#ff754f88}
+
+/* sign in (shown to guests when the host provides LOGIN_URL) */
+.hud-signin{justify-self:center;padding:7px 14px;border-radius:999px;border:1px solid #3ddc8488;background:#0d2a1cf0;color:#c9f7da;font:700 .72rem var(--mono);text-decoration:none;text-align:center}
+body:not([data-phase=menu]) .hud-signin{display:none}
+.account-line{color:#c9f7da}
+.signin-link.wide-btn{display:flex;margin:6px 0 10px;text-decoration:none}
+.signin-link[hidden]{display:none!important}

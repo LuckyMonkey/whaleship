@@ -18,6 +18,7 @@
 <section class="hero">
   <h1>How to play</h1>
   <p class="lead">WHALESHIP is Battleship where the ships are infrastructure. Your fleet of container-carrying whales, Kubernetes carriers and Linux icebergs hides on a 3D ocean. Find the enemy's fleet and sink every vessel before they sink yours.</p>
+  <figure class="shot"><img src="./img/fleet.webp" width="1100" height="660" alt="A fleet on the 3D ocean: a container-carrying whale, Kubernetes carrier ships, a walrus storage node, Linux icebergs with penguins and squid proxies"><figcaption>Your fleet: Moby the Docker whale, Kubernetes carriers, walrus storage, Tux icebergs and squid proxies.</figcaption></figure>
   <ul class="facts"><li>⏱ 5–15 minutes</li><li>👥 solo vs AI, or a friend</li><li>📱 phone or desktop</li><li>🔓 no account needed</li></ul>
 </section>
 
@@ -55,6 +56,7 @@ Y Z 0 1 2 3
     <tr><td>Undo a target</td><td>Tap it again</td><td><kbd>Backspace</kbd> (or click it again); <kbd>Esc</kbd> cancels a half-typed sector</td></tr>
     <tr><td>Your map / theirs</td><td colspan="2">The <b>🎯 enemy</b> / <b>⚓ mine</b> switch (top left)</td></tr>
   </table>
+  <figure class="shot"><img src="./img/enemy-map.webp" width="1100" height="660" loading="lazy" alt="The enemy map with burning hit marks, splash rings for misses, yellow scan signals and firewall icebergs, next to the targeting console"><figcaption>Enemy waters: burning hits, ○ misses, ? scan signals, icebergs — and the targeting console on the right.</figcaption></figure>
   <h3>Pings per turn</h3>
   <p>Each turn you fire a <b>salvo</b>: one ping per vessel you still have afloat, up to four. A living Kubernetes carrier adds one more. You don't have to use them all — transmit whenever you like.</p>
   <h3>Reading the board</h3>
@@ -109,12 +111,15 @@ Y Z 0 1 2 3
 
 <section id="friends">
   <h2>Playing with friends</h2>
+  <figure class="shot narrow"><img src="./img/phones.webp" width="700" height="762" loading="lazy" alt="The game on two phones: the enemy map with a full-width TRANSMIT button and swipeable weapons, and your own fleet"><figcaption>On a phone: tap squares, pinch to zoom, TRANSMIT.</figcaption></figure>
   <ul>
     <li><b>Play a friend</b> gives you a link and a QR code. Whoever opens it joins your game — no account, no app.</li>
     <li>Games have <b>no time limit</b>. Close the tab; your seat waits. If an opponent goes silent for 7 days you can claim the win.</li>
     <li><b>Ending a game:</b> tap 🏳 in the top bar, or ✕ next to any game in 🗂 Games (tap again to confirm). A game in progress counts as a forfeit; one nobody has started just closes; finished games are cleared from the list.</li>
+    <li><b>Sign in to play anywhere:</b> with a fridge.run account (🔐 <b>Sign in</b> on the start screen or in 🗂 Games), your games follow you — open WHALESHIP on your phone, sign in, and the game waiting on you opens. Games you started as a guest move onto your account the next time you open them signed in.</li>
     <li><b>Several games at once:</b> 🗂 <b>Games</b> lists everything you're playing and whose move it is. The badge counts games waiting on you.</li>
-    <li><b>Notifications:</b> turn on desktop notifications from 🗂 Games and you'll hear when it's your move in any game (keep a WHALESHIP tab open in the background).</li>
+    <li><b>Notifications:</b> allow them when asked (or from 🗂 Games) and your phone or computer tells you when it's your move, when a friend joins, and when a game ends — <em>even with WHALESHIP closed</em>. Tapping one opens that game.</li>
+    <li><b>On a phone:</b> add WHALESHIP to your home screen (Share → Add to Home Screen on iPhone, ⋮ → Install app on Android). On iPhone this is required for notifications.</li>
   </ul>
 </section>
 
@@ -140,7 +145,8 @@ help                 everything else</pre>
   <h2>FAQ</h2>
   <details><summary>Do I need an account?</summary><p>No. You get a random captain name stored in a cookie on this device. If you're signed in to the host site, your account name is used instead.</p></details>
   <details><summary>What do you store?</summary><p>The state of each match (fleets, shots, turn) and a results line per finished game for the leaderboard (captain name, wins, accuracy). Finished matches are deleted after 7 days. No tracking, no ads.</p></details>
-  <details><summary>Can I keep playing on another device?</summary><p>Each device has its own seat key. Open the same invite link on a device where you're signed in with the same account to rejoin your seat.</p></details>
+  <details><summary>Can I keep playing on another device?</summary><p>Yes — sign in with the same account on both. Your games appear in 🗂 Games on every device, and the one waiting on you opens automatically. As a guest, your seat lives in this browser only.</p></details>
+  <details><summary>I don't get notifications.</summary><p>Check that notifications are allowed for this site in your browser settings. On iPhone, install WHALESHIP to the home screen first (iOS only delivers web notifications to installed apps). Notifications only cover games against friends — the AI answers instantly.</p></details>
   <details><summary>The AI is too good / too easy.</summary><p>Easy fires at random, Normal hunts around hits, Hard calculates where vessels can still fit and uses specials.</p></details>
   <details><summary>Is this affiliated with Docker or Kubernetes?</summary><p>No. WHALESHIP is an unofficial fan game that borrows the vocabulary for jokes. Container names come from Docker's open-source name generator (Apache-2.0).</p></details>
 </section>
