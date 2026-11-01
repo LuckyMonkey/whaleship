@@ -3,7 +3,9 @@
   <a href="/whaleship/" class="brand" aria-label="WHALESHIP home"><svg width="32" height="24" viewBox="0 0 80 60" aria-hidden="true"><path d="M7 23H60V13L76 22L67 32C64 53 20 59 9 37Z" fill="#1d63ed" stroke="#e9f8ff" stroke-width="4"/><path d="M17 10h14v15H17zm16 0h14v15H33zm16 0h10v15H49z" fill="#ffcb3b" stroke="#e9f8ff" stroke-width="3"/><circle cx="21" cy="35" r="3" fill="#e9f8ff"/></svg><span>WHALESHIP</span></a>
   <p id="status" class="status-pill" role="status">connecting…</p>
   <nav aria-label="Game tools">
+    <button id="games-btn" class="icon games" aria-label="Games" title="Your games">🗂</button>
     <button id="new-game" class="icon new" aria-label="New game" title="New game">＋</button>
+    <a id="how-link" class="icon" href="./how.html" aria-label="How to play" title="How to play">?</a>
     <button id="sound-toggle" class="icon" aria-pressed="false" aria-label="Sound on" title="Sound">🔊</button>
     <a id="control-link" class="icon" href="./control.html" target="whaleship-control" aria-label="Settings, ranks and help" title="Settings · ranks · help">⚙</a>
   </nav>
@@ -58,19 +60,22 @@
 </main>
 
 <section class="screen screen-term" id="screen-term" aria-label="Terminal">
+  <div class="term-top"><button id="term-back" class="term-back">← Back to game</button><span>terminal · type <b>help</b></span><button id="term-watch" class="term-toggle" aria-pressed="false" title="Show the live map and container list">🗺 live map</button></div>
   <div class="pane pane-watch"><div class="watch-head"><span>Every 1.0s: whalemap &amp;&amp; docker ps -a</span><span id="watch-clock"></span></div><div class="watch-body"><pre id="map" class="map" aria-label="Network map"></pre><pre id="pods" class="pods" aria-label="Fleet status"></pre></div></div>
   <div class="pane pane-shell">
     <div id="terminal-log" class="term-log" role="log" aria-live="polite" aria-relevant="additions text"></div>
     <form id="terminal-form" class="term-form"><label for="command"><b class="pu">captain@whaleship</b>:<b class="pp">~</b>$</label><input id="command" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Game command"></form>
   </div>
-  <div class="chips" id="chips" aria-label="Quick commands"><button data-cmd="docker ps">docker ps</button><button data-cmd="map">map</button><button data-cmd="status">status</button><button data-cmd="invite">invite</button><button data-cmd="help">help</button><button data-cmd="fullscreen">fullscreen</button><button data-cmd="clear">clear</button><button data-cmd="exit">exit</button></div>
+  <div class="chips" id="chips" aria-label="Quick commands"><button data-cmd="help">help</button><button data-cmd="docker ps">docker ps</button><button data-cmd="kubectl get nodes">kubectl get nodes</button><button data-cmd="status">status</button><button data-cmd="invite">invite</button><button data-cmd="clear">clear</button></div>
   <div class="tmux-bar"><span class="sess">[whaleship]</span><span class="wins">0:whalemap- 1:bash*</span><code id="release" class="release"></code><button id="to-game" class="tm-back">🌊 ocean</button></div>
 </section>
 
 </div></div>
 
-<dialog id="new-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>New game</h2><button class="x" aria-label="Close">×</button></form>
-  <p class="sheet-sub">$ docker compose up --scale grid=… · 20×20 recommended</p>
+<dialog id="new-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>Games</h2><button class="x" aria-label="Close">×</button></form>
+  <div id="recent-wrap" hidden><p class="sheet-sub">$ docker ps — your games (play several at once; no time limits)</p><div id="recent" class="recent"></div></div>
+  <div id="notify-wrap" hidden><button id="notify-enable" class="big secondary wide-btn"><span>🔔 Turn on desktop notifications</span><small>get told when it’s your move in any game</small></button></div>
+  <p class="sheet-sub">$ docker compose up — start a new game</p>
   <div class="sizes" role="group" hidden aria-label="Board size"><button data-size="15"><b>SECTORS</b><small>★ A–Y · salvo 3</small></button><button data-size="20"><b>20×20</b><small>salvo 4</small></button><button data-size="30"><b>30×30</b><small>armada · salvo 6</small></button></div>
   <div class="rules" role="group" aria-label="Game mode"><button data-rules="classic" title="Plain salvo battleship — no specials."><b>CLASSIC</b><small>just pings</small></button><button data-rules="warfare" title="Each creature powers abilities. Specials have charges and cooldowns."><b>WARFARE</b><small>★ roles + specials</small></button><button data-rules="chaos" title="Warfare plus random Kubernetes events: self-healing, CrashLoopBackOff, drains…"><b>CHAOS</b><small>+ k8s events</small></button></div>
   <div class="mode-grid">
@@ -79,7 +84,6 @@
     <button class="big primary" data-mode="hard"><span>🐋 SOLO · HARD</span><small>probability whale</small></button>
     <button class="big friend" data-mode="multiplayer"><span>🤝 PLAY A FRIEND</span><small>get a link · they tap it · you're playing</small></button>
   </div>
-  <div id="recent-wrap" hidden><p class="sheet-sub">$ docker ps — your ongoing games</p><div id="recent" class="recent"></div></div>
 </dialog>
 
 <dialog id="share-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>📨 Send this to a friend</h2><button class="x" aria-label="Close">×</button></form>

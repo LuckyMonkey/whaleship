@@ -152,7 +152,7 @@ function showMenu() { state = null; active = null; queue = []; hidden.home.clear
 
 function connect() {
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/whaleship/ws`);
-  socket.onopen = () => { connected = true; retries = 0; render(); };
+  socket.onopen = () => { connected = true; retries = 0; render(); setTimeout(pollGames, 600); };
   socket.onclose = () => { connected = false; pending = false; render(); setTimeout(connect, Math.min(15000, 750 * 2 ** retries++)); };
   socket.onerror = () => {};
   socket.onmessage = e => {
@@ -164,6 +164,7 @@ function connect() {
       else if (active && seatKeys[active]) raw({type: 'RESUME_MATCH', session: active, credential: seatKeys[active]});
       return;
     }
+    if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
     pending = false;
     if (msg.error) {
       log(`Error response from daemon: ${msg.error}`, 'error'); audio.sound('error');
@@ -196,7 +197,7 @@ function onState(msg) {
   if (restoring) {
     held = null; view = deploying() ? 'home' : (myTurn() || state.phase === 'finished') ? 'target' : 'home';
     prompt(`docker compose -p ${toShort(state.id).slice(0, 8).toLowerCase()} up --attach`);
-    log(`[+] ${msg.type === 'MATCH_CREATED' ? 'Running' : 'Attaching'} · ${state.mode} · ${SECT() ? '24 sectors (18x12)' : N + 'x' + HT} · salvo ${state.salvo} · rev ${state.revision} · subnet 172.20.0.0/16`);
+    log(`[+] ${msg.type === 'MATCH_CREATED' ? 'Running' : 'Attaching'} · ${state.mode} · ${SECT() ? `${NSEC()} sectors (${N}x${HT})` : N + 'x' + HT} · salvo ${state.salvo} · rev ${state.revision} · subnet 172.20.0.0/16`);
     autoZoom();
   }
   if (state.me.ships.length === FLEET.length && !printedFleet.has(state.id)) {
@@ -228,23 +229,56 @@ function onState(msg) {
 function matches() { try { return JSON.parse(localStorage.getItem('whaleship:matches') || '{}'); } catch { return {}; } }
 function rememberMatch() {
   const m = matches();
-  if (state.phase === 'finished') delete m[state.id]; else m[state.id] = {mode: state.mode, size: state.size, opp: state.opponent?.name || '', mine: myTurn(), phase: state.phase, t: Date.now()};
-  try { localStorage.setItem('whaleship:matches', JSON.stringify(Object.fromEntries(Object.entries(m).sort((a, b) => b[1].t - a[1].t).slice(0, 10)))); } catch {}
+  m[state.id] = {mode: state.mode, size: state.size, opp: state.opponent?.name || '', mine: myTurn(), phase: state.phase, t: Date.now()};
+  try { localStorage.setItem('whaleship:matches', JSON.stringify(Object.fromEntries(Object.entries(m).sort((a, b) => b[1].t - a[1].t).slice(0, 20)))); } catch {}
+  const g = games.get(state.id); if (g) { g.myTurn = myTurn(); g.phase = state.phase; } paintGames();
+}
+/* ---------------- my games: play several at once ---------------- */
+const games = new Map();   // id → server status (only for matches this browser holds a seat in)
+function pollGames() { if (!connected || document.hidden) return; const list = Object.entries(seatKeys).slice(-30).map(([session, credential]) => ({session, credential})); if (list.length) raw({type: 'LIST_MATCHES', matches: list}); }
+setInterval(pollGames, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) pollGames(); });
+function onMatchList(list) {
+  const seenIds = new Set();
+  for (const g of list) {
+    seenIds.add(g.id); const prev = games.get(g.id); games.set(g.id, g);
+    if (!prev || g.id === state?.id) continue;   // the game on screen already has its own cues
+    const who = g.opponent || (g.mode === 'multiplayer' ? 'your friend' : 'the AI');
+    if (g.myTurn && !prev.myTurn) alertGame(g.id, `🟢 Your move vs ${who}`, `Turn ${g.turn_number} — ${who} fired. Your move, captain.`);
+    else if (g.opponent && !prev.opponent) alertGame(g.id, `🤝 ${g.opponent} joined your battle`, 'Their fleet is deploying. Your seat is waiting.');
+    else if (g.phase === 'finished' && prev.phase !== 'finished') alertGame(g.id, g.winner === g.seat ? '🏆 You won a game' : '💀 A game ended', `vs ${who}`);
+  }
+  for (const id of games.keys()) if (!seenIds.has(id)) games.delete(id);   // match closed or expired on the server
+  paintGames();
+}
+function alertGame(id, title, body) {
+  audio.sound('turn'); toast(`${title} · open 🗂 Games to switch`);
+  if ('Notification' in window && Notification.permission === 'granted') { try { const n = new Notification(title, {body, tag: 'whaleship-' + id}); n.onclick = () => { window.focus(); switchGame(id); n.close(); }; } catch {} }
+}
+function switchGame(id) { if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); }
+function paintGames() {
+  const waiting = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length, b = $('#games-btn');
+  b.dataset.count = waiting || ''; b.setAttribute('aria-label', waiting ? `Games — your move in ${waiting}` : 'Games');
+  renderTitle();
+  if ($('#new-dialog').open) renderGameList();
+}
+function renderGameList() {
+  const list = $('#recent'); list.replaceChildren();
+  const local = matches(), ids = [...new Set([...games.keys(), ...Object.keys(local)])].filter(id => seatKeys[id]);
+  const rows = ids.map(id => ({id, g: games.get(id), l: local[id] || {}})).filter(r => r.g || r.l.phase !== 'finished')
+    .sort((a, b) => (b.g?.myTurn ? 1 : 0) - (a.g?.myTurn ? 1 : 0) || (b.l.t || 0) - (a.l.t || 0));
+  for (const {id, g, l} of rows) {
+    const mode = g?.mode || l.mode, opp = g?.opponent || l.opp, here = id === state?.id;
+    const who = mode === 'multiplayer' ? (opp ? `vs ${opp}` : 'waiting for a friend') : `solo · ${mode}`;
+    const st = here ? '👁 on screen' : !g ? '… checking' : g.phase === 'finished' ? (g.winner === g.seat ? '🏆 you won' : '💀 you lost') : g.phase === 'playing' ? (g.myTurn ? '🟢 your move' : '⏳ their move') : (opp || mode !== 'multiplayer') ? '⚓ deploying' : '📨 invite sent';
+    const b = document.createElement('button'); b.className = 'recent-row' + (g?.myTurn && !here ? ' hot' : ''); b.disabled = here;
+    b.innerHTML = '<code></code><span></span><b></b>'; b.children[0].textContent = g ? `turn ${g.turn_number || 0}` : '—'; b.children[1].textContent = who; b.children[2].textContent = st;
+    b.onclick = () => switchGame(id); list.append(b);
+  }
+  $('#recent-wrap').hidden = !rows.length;
+  $('#notify-wrap').hidden = !('Notification' in window) || Notification.permission !== 'default';
 }
 function paintSizes() { document.querySelectorAll('[data-size]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === chosenSize))); }
-function openNewGame() {
-  const list = $('#recent'); list.replaceChildren();
-  const rows = Object.entries(matches()).filter(([id]) => id !== state?.id && seatKeys[id]);
-  for (const [id, m] of rows) {
-    const b = document.createElement('button'); b.className = 'recent-row';
-    const who = m.mode === 'multiplayer' ? (m.opp ? `vs ${m.opp}` : 'waiting for a friend') : `solo · ${m.mode}`;
-    const st = m.phase === 'playing' ? (m.mine ? '🟢 your turn' : '⏳ their turn') : '⚓ deploying';
-    b.innerHTML = '<code></code><span></span><b></b>'; b.children[0].textContent = `${m.size || 10}²`; b.children[1].textContent = who; b.children[2].textContent = st;
-    b.onclick = () => { $('#new-dialog').close(); H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); };
-    list.append(b);
-  }
-  $('#recent-wrap').hidden = !rows.length; paintSizes(); $('#new-dialog').showModal();
-}
+function openNewGame() { renderGameList(); paintSizes(); $('#new-dialog').showModal(); pollGames(); }
 let qrLoaded = null;
 function loadQr() { return qrLoaded ??= new Promise((ok, no) => { const s = document.createElement('script'); s.src = './src/vendor/qrcode.min.js'; s.onload = ok; s.onerror = no; document.head.append(s); }); }
 async function openShare() {
@@ -1089,6 +1123,7 @@ function renderTitle() {
   if (state?.phase === 'playing') { if (myTurn()) { t = '🟢 Your turn · WHALESHIP'; f = '🟢'; } else { t = `⏳ ${oppName()}’s turn · WHALESHIP`; f = '⏳'; } }
   else if (state?.phase === 'finished') { const won = state.winner === state.seat; t = `${won ? '🏆 Victory' : '💀 It works on my machine'} · WHALESHIP`; f = won ? '🏆' : '💀'; }
   else if (deploying() && state.mode === 'multiplayer' && !state.opponent) { t = '📨 Waiting for a friend · WHALESHIP'; f = '📨'; }
+  const others = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length; if (others) t = `(${others}) ${t}`;
   if (document.title !== t) document.title = t; setFavicon(f);
   $('#status').textContent = connected ? (state ? `● ${state.mode === 'multiplayer' ? (state.opponent ? 'vs ' + oppName() : 'waiting for a friend') : 'solo · ' + state.mode} · ${SECT() ? 'sectors' : N + '²'} · turn ${state.turn_number ?? 0}` : '● harbor online') : '○ reconnecting…';
   $('#status').classList.toggle('offline', !connected);
@@ -1143,8 +1178,8 @@ let watchSig = '';
 function renderWatch() {
   $('#release').textContent = state ? `${toShort(state.id).slice(0, 8).toLowerCase()} · ${state.mode} · ${N}x${HT}${SECT() && sel >= 0 ? ' · sector ' + LETTERS[sel] : ''}` : 'idle';
   $('#watch-clock').textContent = new Date().toString().slice(16, 24);
-  if (!document.body.classList.contains('term-open')) return;
-  const wide = $('#screen-term').clientWidth >= (N * 2 + (SECT() ? 12 : 4)) * 2 * 7 + 140, maps = !state ? [] : wide ? ['target', 'home'] : [view];
+  if (!document.body.classList.contains('term-open') || !document.body.classList.contains('term-watch')) return;
+  const wide= $('#screen-term').clientWidth >= (N * 2 + (SECT() ? 12 : 4)) * 2 * 7 + 140, maps = !state ? [] : wide ? ['target', 'home'] : [view];
   const sig = `${state?.revision}|${maps}|${[...hidden.home, ...hidden.target, ...hiddenSunk].join()}|${shownSonar}|${[...targets]}|${innerWidth}`;
   if (sig === watchSig) return; watchSig = sig;
   $('#map').innerHTML = !state ? '<span class="dim">no cluster attached — try: new 20</span>' : maps.map(m => `<div class="map-block"><span class="${m === 'target' ? 'm-hit' : 'm-own'}">${m === 'target' ? '▼ enemy 172.20.0.0/16' : '▼ mine 10.0.0.0/16'}</span>\n${asciiMap(m)}</div>`).join('');
@@ -1223,7 +1258,7 @@ function command(line) {
   if (cmd === 'fullscreen') return fullscreen();
   if (cmd === 'invite') { if (state?.mode === 'multiplayer') { log(inviteUrl(state.id)); copy(inviteUrl(state.id), 'Invite link copied!'); } else log('invite: no multiplayer match running (try: new friend)', 'error'); return; }
   if (cmd === 'new') { const rw = parts.find(p => RULE_INFO[p]); if (rw) { chosenRules = rw; try { localStorage.setItem('whaleship:rules', rw); } catch {} } const word = parts.slice(1).find(p => isNaN(Number(p)) && !RULE_INFO[p]) || 'solo', m = {solo: 'normal', easy: 'easy', normal: 'normal', hard: 'hard', friend: 'multiplayer'}[word], sz = 36; if (!m) return log('usage: new [easy|normal|hard|friend] [classic|warfare|chaos]', 'error'); openTerminal(false); return newGame(m, sz); }
-  const eggs = {sudo: 'captain is not in the sudoers file. This incident will be reported.', uname: 'WhaleOS 0.7 krill-6.8 x86_64 extremely-buoyant', fortune: 'A watched container never boils. Unless it is on fire.', 'docker whale': 'Whale is healthy. Emotionally, we cannot comment.', 'helm list': 'NAME   CHART              STATUS\nfleet  whaleship-0.7.0    deployed', 'kubectl get nodes': 'NAME     STATUS     ROLES\nmoby     Ready      docker-host\nwalrus   Ready      storage\ntux      NotReady   coffee-break', 'rm -rf /': 'nice try. the whales are read-only.', ls: 'Dockerfile  compose.yaml  krill/  definitely-not-secrets.env', top: 'PID  USER     %CPU COMMAND\n  1  moby     99.9 swim\n 42  tux       0.1 coffee'};
+  const eggs = {sudo: 'captain is not in the sudoers file. This incident will be reported.', uname: 'WhaleOS krill-6.8 x86_64 extremely-buoyant', fortune: 'A watched container never boils. Unless it is on fire.', 'docker whale': 'Whale is healthy. Emotionally, we cannot comment.', 'helm list': 'NAME   CHART              STATUS\nfleet  whaleship-0.7.0    deployed', 'kubectl get nodes': 'NAME     STATUS     ROLES\nmoby     Ready      docker-host\nwalrus   Ready      storage\ntux      NotReady   coffee-break', 'rm -rf /': 'nice try. the whales are read-only.', ls: 'Dockerfile  compose.yaml  krill/  definitely-not-secrets.env', top: 'PID  USER     %CPU COMMAND\n  1  moby     99.9 swim\n 42  tux       0.1 coffee'};
   log(eggs[line] || eggs[cmd] || `bash: ${cmd}: command not found`, eggs[line] || eggs[cmd] ? '' : 'error');
 }
 
@@ -1245,7 +1280,8 @@ $('#cta-invite').onclick = () => openShare();
 $('#share-copy').onclick = () => { copy($('#share-url').value, 'Link copied — send it! 🚀'); $('#share-url').select(); };
 $('#share-native').onclick = async () => { try { await navigator.share({title: 'WHALESHIP', text: 'Battle me in WHALESHIP 🐋📡 — tap to play:', url: $('#share-url').value}); } catch {} };
 $('#share-url').onclick = () => $('#share-url').select();
-$('#new-game').onclick = () => openNewGame();
+$('#new-game').onclick = () => openNewGame(); $('#games-btn').onclick = () => openNewGame();
+$('#notify-enable').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 Desktop notifications on — we’ll tell you when it’s your move in any game.' : 'Notifications stay off. The 🗂 badge and tab title still show waiting games.'); } catch {} renderGameList(); };
 document.querySelectorAll('#new-dialog [data-mode]').forEach(b => b.onclick = () => { $('#new-dialog').close(); $('#result-overlay').hidden = true; openTerminal(false); newGame(b.dataset.mode, chosenSize); });
 $('#cta-shuffle').onclick = () => { held = null; act('RANDOMIZE_FLEET'); audio.sound('place'); };
 $('#cta-ready').onclick = () => act('READY');
@@ -1258,6 +1294,8 @@ $('#cta-notify').onclick = async () => { try { const p = await Notification.requ
 $('#view-target').onclick = () => slideTo('target'); $('#view-home').onclick = () => slideTo('home');
 $('#result-overlay').onclick = () => $('#result-overlay').hidden = true;
 $('#to-terminal').onclick = () => openTerminal(true); $('#to-game').onclick = () => openTerminal(false);
+$('#term-back').onclick = () => openTerminal(false);
+$('#term-watch').onclick = () => { const on = !document.body.classList.contains('term-watch'); document.body.classList.toggle('term-watch', on); $('#term-watch').setAttribute('aria-pressed', String(on)); watchSig = ''; renderWatch(); };
 setInterval(renderWatch, 1000);
 $('#terminal-form').onsubmit = e => { e.preventDefault(); command($('#command').value); $('#command').value = ''; };
 $('#command').addEventListener('input', () => audio.sound('key'));
@@ -1313,7 +1351,7 @@ async function init3D() {
   } catch (e) { console.warn('3D unavailable, using the 2D board', e); return null; }
 }
 paintSound(); setSize(chosenSize); buildBoardEvents(); zoomGestures(); prefs.applyDocument(settings); audio.setLevels(settings); sizeFx(); sizeFoam(); autoZoom(); render();
-log(`Last login: ${new Date().toString().slice(0, 24)} on ttys001\nWhaleOS 0.7 (moby) — infrastructure battleship\n\n * Your fleet is a stack: moby=docker host · swarm=orchestrator · walrus=storage · tux=linux host · squid=proxy\n * Fire:  ping e4      Specials:  nmap e4 · hping3 e4 · traceroute e4\n * Type help. Nothing here runs on a real host.\n`);
+log(`Last login: ${new Date().toString().slice(0, 24)} on ttys001\nWhaleOS (moby) — infrastructure battleship\n\n * Your fleet is a stack: moby=docker host · k8s=orchestrator · walrus=storage · tux=linux host · squid=proxy\n * Fire:  ping q5      Specials:  nmap q5 · hping3 q5 · traceroute q5      How to play: the ? button\n * Type help. Nothing here runs on a real host.\n`);
 setInterval(lifeTick, 850); setInterval(critterTick, 3000); setTimeout(critterTick, 700);
 try {
   const r = await fetch('./api/profile'); if (!r.ok) throw Error(); profile = await r.json();

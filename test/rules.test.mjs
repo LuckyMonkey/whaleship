@@ -91,3 +91,13 @@ test('docker-style container names: format, uniqueness, stable on reconnect, not
   for (const a of fired.state.attacks) { if (a.hit) assert.ok(a.container?.name); else assert.equal(a.container, undefined); }
   c.close(); d.close();
 });
+
+test('LIST_MATCHES: status of every game you hold a seat in, nothing for wrong credentials', async () => {
+  const a = await solo(), b = await solo();
+  const c = client(); await c.open;
+  const res = await c.send({ type: 'LIST_MATCHES', matches: [
+    { session: a.st.id, credential: a.created.credential }, { session: b.st.id, credential: b.created.credential }, { session: a.st.id, credential: 'not-my-seat' }, { session: 'nope', credential: 'x' } ] });
+  assert.equal(res.type, 'MATCH_LIST'); assert.equal(res.matches.length, 2);
+  for (const g of res.matches) { assert.equal(g.phase, 'playing'); assert.equal(g.myTurn, true); assert.equal(g.seat, 0); assert.ok(g.opponent); assert.equal(g.manifest, undefined); assert.equal(g.ships, undefined); }
+  a.close(); b.close(); c.close();
+});

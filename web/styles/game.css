@@ -401,3 +401,23 @@ body.r3d.zoomed .world3d,body.r3d .world3d{cursor:crosshair}
   .views{top:56px}.views button{min-height:38px;padding:0 14px;font-size:.78rem}
   .zoom-ctl{top:104px}
 }
+
+/* ================= v0.14: games list, notifications ================= */
+.icon.games{position:relative}
+.icon.games[data-count]:not([data-count=""])::after{content:attr(data-count);position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:var(--green);color:#04121c;font:900 .68rem/18px var(--mono);text-align:center;box-shadow:0 0 0 2px #060f17}
+.recent-row.hot{border-color:var(--green);background:#0d2a1c}.recent-row:disabled{opacity:.6;cursor:default}
+#notify-wrap{margin:8px 0}
+@media (max-width:420px){.bar nav{gap:4px}.icon{width:38px;height:38px}}
+
+/* ================= v0.14: simpler terminal ================= */
+.screen-term{grid-template-rows:auto minmax(0,1fr) auto}   /* top bar · log + prompt · chips (live map pane hidden) */
+body.term-watch .screen-term{grid-template-rows:auto minmax(0,42%) minmax(0,1fr) auto}
+body:not(.term-watch) .pane-watch{display:none}
+.tmux-bar{display:none}
+.term-top{position:relative;z-index:2;display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid #1d2a24;background:#070c0e}
+.term-top span{flex:1;min-width:0;color:#7a9aa8;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.term-top b{color:#b8f5d0}
+.term-back{min-height:40px;padding:0 16px;border:1px solid #23e4d0;border-radius:10px;background:#0f2a2a;color:#e9f8ff;font:800 14px system-ui,sans-serif;cursor:pointer}
+.term-back:hover{background:#164040}
+.term-toggle{min-height:36px;padding:0 12px;border:1px solid #2a3a33;border-radius:8px;background:#0b120f;color:#b8f5d0;font:inherit;font-size:12px}
+.term-toggle[aria-pressed=true]{border-color:#23e4d0;color:#23e4d0}
+.screen-term .chips{padding-bottom:max(6px,env(safe-area-inset-bottom))}

@@ -275,6 +275,18 @@ function joinMatch(ws, msg, resume) {
   send(ws, { type: 'PLAYER_JOINED', state: view(m, 1), credential: cred });
   for (const o of sockets.get(m.id) || []) if (o !== ws) send(o, { type: 'PLAYER_JOINED', state: view(m, o.seat) });
 }
+// Status of every match this browser holds a seat in (proved by its seat credential), without attaching to them —
+// lets one tab follow several games and notify when it's your move elsewhere. Reveals nothing beyond the seat's own view.
+function listMatches(ws, msg) {
+  const list = (Array.isArray(msg.matches) ? msg.matches : []).slice(0, 30).map(x => {
+    const m = matches.get(String(x && x.session || '')); if (!m || !x.credential) return null;
+    const seat = m.seats.findIndex(s => s && s.credHash === sha(String(x.credential))); if (seat < 0) return null;
+    const op = m.seats[1 - seat];
+    return { id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
+      opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision };
+  }).filter(Boolean);
+  send(ws, { type: 'MATCH_LIST', matches: list });
+}
 function legalPlacement(m, seat, shipId, cells) {
   if (!cells) return false;
   const taken = new Set(seat.ships.filter(s => s.id !== shipId).flatMap(s => s.cells));
@@ -462,6 +474,7 @@ function handle(ws, raw) {
   if (msg.type === 'CREATE_MATCH') return createMatch(ws, msg);
   if (msg.type === 'JOIN_MATCH') return joinMatch(ws, msg, false);
   if (msg.type === 'RESUME_MATCH') return joinMatch(ws, msg, true);
+  if (msg.type === 'LIST_MATCHES') return listMatches(ws, msg);
   const m = matches.get(ws.matchId);
   if (!m || ws.seat == null || msg.session !== m.id) return send(ws, { error: 'Not in a match.' });
   const s = ws.seat, me = m.seats[s];
