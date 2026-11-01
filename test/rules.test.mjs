@@ -111,8 +111,8 @@ test('END_MATCH: forfeits a game in progress from anywhere; needs the seat crede
   assert.ok((await c.send({ type: 'END_MATCH', session: a.st.id, credential: 'wrong' })).error);
   const r = await c.send({ type: 'END_MATCH', session: a.st.id, credential: a.created.credential });
   assert.equal(r.type, 'MATCH_ENDED'); assert.equal(r.result, 'forfeit');
-  const l = await c.send({ type: 'LIST_MATCHES', matches: [{ session: a.st.id, credential: a.created.credential }] });
-  assert.equal(l.matches[0].phase, 'finished'); assert.notEqual(l.matches[0].winner, l.matches[0].seat);
+  const back = await a.send({ type: 'RESUME_MATCH', session: a.st.id, credential: a.created.credential });   // the game itself still records the forfeit
+  assert.equal(back.state.phase, 'finished'); assert.equal(back.state.reason, 'forfeit'); assert.notEqual(back.state.winner, back.state.seat);
   a.close(); c.close();
 });
 
@@ -164,4 +164,18 @@ test('Web Push: battle-on to the host, your-move to the friend after the host fi
   assert.ok(toHost.length >= 2, 'host told: friend joined + battle on');
   assert.ok(toFriend.length >= 1, 'friend told: your move');
   for (const g of got) { assert.equal(g.enc, 'aes128gcm'); assert.match(g.auth, /^vapid t=.+, k=.+/); assert.ok(g.bytes > 100); }
+});
+
+test('deleted games stay deleted: END_MATCH hides the game from that player for good', async () => {
+  const a = await solo(), c = client(); await c.open;
+  const key = { session: a.st.id, credential: a.created.credential };
+  assert.equal((await c.send({ type: 'END_MATCH', ...key })).hidden, true);                    // in progress → forfeit + hidden
+  assert.deepEqual((await c.send({ type: 'LIST_MATCHES', matches: [key] })).matches, [], 'not listed again');
+  assert.equal((await c.send({ type: 'END_MATCH', ...key })).type, 'MATCH_ENDED');             // deleting again is harmless
+  const b = await solo(); await b.act('LEAVE_MATCH');                                           // a finished game, then deleted
+  const kb = { session: b.st.id, credential: b.created.credential };
+  assert.equal((await c.send({ type: 'LIST_MATCHES', matches: [kb] })).matches.length, 1);
+  await c.send({ type: 'END_MATCH', ...kb });
+  assert.deepEqual((await c.send({ type: 'LIST_MATCHES', matches: [kb] })).matches, []);
+  a.close(); b.close(); c.close();
 });

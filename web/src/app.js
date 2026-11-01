@@ -168,7 +168,7 @@ function connect() {
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
-    if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game ended.'); return; }
+    if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game removed.'); return; }
     pending = false;
     if (msg.error) {
       log(`Error response from daemon: ${msg.error}`, 'error'); audio.sound('error');
@@ -182,6 +182,7 @@ function connect() {
 
 function onState(msg) {
   const incoming = msg.state;
+  if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
   if (state?.id === incoming.id && incoming.revision < state.revision) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
@@ -232,6 +233,7 @@ function onState(msg) {
 /* ---------------- ongoing games ---------------- */
 function matches() { try { return JSON.parse(localStorage.getItem('whaleship:matches') || '{}'); } catch { return {}; } }
 function rememberMatch() {
+  if (deletedGames.has(state.id)) return;
   const m = matches();
   m[state.id] = {mode: state.mode, size: state.size, opp: state.opponent?.name || '', mine: myTurn(), phase: state.phase, t: Date.now()};
   try { localStorage.setItem('whaleship:matches', JSON.stringify(Object.fromEntries(Object.entries(m).sort((a, b) => b[1].t - a[1].t).slice(0, 20)))); } catch {}
@@ -243,6 +245,7 @@ function pollGames() { if (!connected || document.hidden) return; const list = O
 // Signed in: your games follow your account to every device. On a fresh device, open the one waiting on you.
 let resumedFromAccount = false;
 function onMyMatches(list) {
+  list = list.filter(g => !deletedGames.has(g.id));
   for (const g of list) { g.account = true; const prev = games.get(g.id); games.set(g.id, {...prev, ...g}); }
   onMatchList([...games.values()].filter(g => g.account || seatKeys[g.id]));
   if (!resumedFromAccount && !state && !invitation(location.href)) {
@@ -271,6 +274,7 @@ async function maybeAskNotify() {
 navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'open-match') { const id = fromShort(e.data.match || ''); if (id && id !== state?.id) switchGame(id); } });
 setInterval(pollGames, 20000); document.addEventListener('visibilitychange', () => { if (!document.hidden) pollGames(); });
 function onMatchList(list) {
+  list = list.filter(g => !deletedGames.has(g.id));
   const seenIds = new Set();
   for (const g of list) {
     seenIds.add(g.id); const prev = games.get(g.id); games.set(g.id, g);
@@ -287,18 +291,26 @@ function alertGame(id, title, body) {
   audio.sound('turn'); toast(`${title} · open 🗂 Games to switch`);
   if (!pushActive && 'Notification' in window && Notification.permission === 'granted') { try { const n = new Notification(title, {body, tag: 'whaleship-' + id}); n.onclick = () => { window.focus(); switchGame(id); n.close(); }; } catch {} }
 }
+// Deleted games stay deleted: drop the key from every identity this browser has stored, and remember the id so
+// account lookups, status polls and late updates can't bring it back.
+const deletedGames = new Set((() => { try { return JSON.parse(localStorage.getItem('whaleship:deleted') || '[]'); } catch { return []; } })());
 function forgetGame(id) {
+  deletedGames.add(id); try { localStorage.setItem('whaleship:deleted', JSON.stringify([...deletedGames].slice(-200))); } catch {}
   delete seatKeys[id]; games.delete(id); const m = matches(); delete m[id]; try { localStorage.setItem('whaleship:matches', JSON.stringify(m)); } catch {}
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+    if (k.startsWith('whaleship:seats:')) { const v = JSON.parse(localStorage.getItem(k) || '{}'); if (id in v) { delete v[id]; localStorage.setItem(k, JSON.stringify(v)); } }
+    if (k.startsWith('whaleship:active:') && localStorage.getItem(k) === id) localStorage.removeItem(k); } } catch {}
+  if (active === id) active = null;
   if (state?.id === id && state.phase !== 'finished') showMenu(); else saveSession();
   paintGames(); if ($('#new-dialog').open) renderGameList();
 }
 // End a game from the list: in progress → forfeit, not started → closed, finished → just cleared from the list
-function endGame(id) {
-  const g = games.get(id);
-  if (!g || g.phase === 'finished') { forgetGame(id); return; }
-  raw({type: 'END_MATCH', session: id, credential: seatKeys[id]}); audio.sound('select');
+function endGame(id) {   // in progress → forfeit; not started → closed; finished → cleared. Always hidden on the server too.
+  raw({type: 'END_MATCH', session: id, credential: seatKeys[id] || ''}); audio.sound('select');
+  forgetGame(id);
 }
-function switchGame(id) { if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); }
+function switchGame(id) {
+  if (deletedGames.has(id)) { deletedGames.delete(id); try { localStorage.setItem('whaleship:deleted', JSON.stringify([...deletedGames])); } catch {} } if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); }
 function paintGames() {
   const waiting = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length, b = $('#games-btn');
   b.dataset.count = waiting || ''; b.setAttribute('aria-label', waiting ? `Games — your move in ${waiting}` : 'Games');
@@ -1363,7 +1375,7 @@ $('#command').addEventListener('input', () => audio.sound('key'));
 $('#stay').onclick = () => $('#leave-dialog').close();
 document.querySelectorAll('#keypad [data-k]').forEach(b => b.onclick = () => keypad(Number(b.dataset.k)));
 document.querySelectorAll('#chips [data-cmd]').forEach(b => b.onclick = () => command(b.dataset.cmd));
-$('#confirm-leave').onclick = () => { if (state) act('LEAVE_MATCH'); showMenu(); $('#leave-dialog').close(); openTerminal(false); };
+$('#confirm-leave').onclick = () => { const id = state?.id; if (state) act('LEAVE_MATCH'); if (id) { raw({type: 'END_MATCH', session: id, credential: seatKeys[id] || ''}); forgetGame(id); } showMenu(); $('#leave-dialog').close(); openTerminal(false); };
 $('#sound-toggle').onclick = async () => { await setSound(!soundOn, true); if (soundOn) audio.sound('join'); };
 $('#foam').addEventListener('animationiteration', foamDrift);
 $('#sea').addEventListener('click', e => { if (!state && !suppressClick && !e.target.closest('button, a, select')) tileTap(-1); });

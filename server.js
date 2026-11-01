@@ -286,7 +286,7 @@ function joinMatch(ws, msg, resume) {
 function listMatches(ws, msg) {
   const list = (Array.isArray(msg.matches) ? msg.matches : []).slice(0, 30).map(x => {
     const m = matches.get(String(x && x.session || '')); if (!m || !x.credential) return null;
-    const seat = m.seats.findIndex(s => credOk(s, x.credential)); if (seat < 0) return null;
+    const seat = m.seats.findIndex(s => credOk(s, x.credential)); if (seat < 0 || m.seats[seat].hidden) return null;
     const op = m.seats[1 - seat];
     return { id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
       opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision };
@@ -300,16 +300,18 @@ function endMatch(ws, msg) {
   let seat = m.seats.findIndex(s => credOk(s, msg.credential));
   if (seat < 0 && ws.authed) seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity);   // signed-in: your account owns the seat
   if (seat < 0) return send(ws, { error: 'That isn’t your game.' });
+  m.seats[seat].hidden = true;   // deleted from your games list: never offered back to you (any device)
   if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); notifyMatch(m, { phase: 'playing', turn: m.turn, opp: true }); }
   else if (m.phase !== 'finished') { m.phase = 'finished'; m.finished = Math.floor(now() / 1000); m.reason = 'closed'; m.revision++; persist(m); for (const o of sockets.get(m.id) || []) send(o, { type: 'MATCH_CLOSED' }); }
-  send(ws, { type: 'MATCH_ENDED', session: m.id, result: m.reason });
+  persist(m);
+  send(ws, { type: 'MATCH_ENDED', session: m.id, result: m.reason, hidden: true });
 }
 // Signed-in players (fridge.run account) can find their games from any device; guests only see what this browser holds.
 function myMatches(ws) {
   if (!ws.authed) return send(ws, { type: 'MY_MATCHES', matches: [] });
   const recent = now() / 1000 - 2 * 86400, list = [];
   for (const m of matches.values()) {
-    const seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity); if (seat < 0) continue;
+    const seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity); if (seat < 0 || m.seats[seat].hidden) continue;
     if (m.phase === 'finished' && (m.reason === 'closed' || (m.finished || 0) < recent)) continue;
     const op = m.seats[1 - seat];
     list.push({ id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
