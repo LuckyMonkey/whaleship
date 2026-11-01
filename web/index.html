@@ -3,6 +3,7 @@
   <a href="/whaleship/" class="brand" aria-label="WHALESHIP home"><svg width="32" height="24" viewBox="0 0 80 60" aria-hidden="true"><path d="M7 23H60V13L76 22L67 32C64 53 20 59 9 37Z" fill="#1d63ed" stroke="#e9f8ff" stroke-width="4"/><path d="M17 10h14v15H17zm16 0h14v15H33zm16 0h10v15H49z" fill="#ffcb3b" stroke="#e9f8ff" stroke-width="3"/><circle cx="21" cy="35" r="3" fill="#e9f8ff"/></svg><span>WHALESHIP</span></a>
   <p id="status" class="status-pill" role="status">connecting…</p>
   <nav aria-label="Game tools">
+    <button id="end-btn" class="icon end" aria-label="End this game" title="End this game" hidden>🏳</button>
     <button id="games-btn" class="icon games" aria-label="Games" title="Your games">🗂</button>
     <button id="new-game" class="icon new" aria-label="New game" title="New game">＋</button>
     <a id="how-link" class="icon" href="./how.html" aria-label="How to play" title="How to play">?</a>
@@ -94,5 +95,5 @@
   <form method="dialog"><button class="big secondary wide-btn"><span>🌊 Back to the ocean</span><small>your fleet is deployed · no time limit</small></button></form>
 </dialog>
 
-<dialog id="leave-dialog" class="sheet"><h2>Abandon ship?</h2><p id="leave-warning">Leaving an active battle counts as a forfeit. Just closing the tab is fine — your seat waits for you.</p><div class="share-row"><button id="stay" class="big secondary"><span>Stay aboard</span></button><button id="confirm-leave" class="big fire"><span>Leave match</span></button></div></dialog>
+<dialog id="leave-dialog" class="sheet"><h2>End this game?</h2><p id="leave-warning">Leaving an active battle counts as a forfeit. Just closing the tab is fine — your seat waits for you.</p><div class="share-row"><button id="stay" class="big secondary"><span>Stay aboard</span></button><button id="confirm-leave" class="big fire"><span>🏳 End game</span></button></div></dialog>
 <div id="toast" role="status" hidden></div><noscript><p>WHALESHIP needs JavaScript. Enable it to play.</p></noscript></body></html>

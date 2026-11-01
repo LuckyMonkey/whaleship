@@ -1,5 +1,5 @@
 'use strict';
-// WHALESHIP 2 — docker battleship server.
+// WHALESHIP — infrastructure battleship server.
 // One small process: WebSocket game protocol + static client + JSON-on-disk persistence.
 // Boards 10/20/30, salvo fire, whale powers, AI captains. No time limits: matches persist across restarts.
 const http = require('node:http');
@@ -15,6 +15,8 @@ const WEB = path.resolve(process.env.WEB_ROOT || path.join(__dirname, 'web'));
 const BASE = '/whaleship';
 const AUTH_BRIDGE = process.env.AUTH_BRIDGE || '';
 const AUTH_SECRET = process.env.AUTH_SECRET || '';
+const AUTH_COOKIE = process.env.AUTH_COOKIE || 'session';   // cookie forwarded to the optional identity bridge
+const INVITE_BASE = process.env.INVITE_BASE || '';           // e.g. https://example.com/whaleship — defaults to the page's own URL
 const ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 const MAX_ACTIVE = Number(process.env.MAX_ACTIVE || 400);
 const FORFEIT_AFTER = Number(process.env.FORFEIT_AFTER || 7 * 24 * 3600);     // opponent silent this long → you may claim
@@ -287,6 +289,16 @@ function listMatches(ws, msg) {
   }).filter(Boolean);
   send(ws, { type: 'MATCH_LIST', matches: list });
 }
+// End any of your matches from anywhere (the games list): forfeit if it's in progress, close it if nobody's playing yet.
+function endMatch(ws, msg) {
+  const m = matches.get(String(msg.session || ''));
+  if (!m) return send(ws, { type: 'MATCH_ENDED', session: String(msg.session || ''), gone: true });
+  const seat = m.seats.findIndex(s => s && s.credHash === sha(String(msg.credential || '')));
+  if (seat < 0) return send(ws, { error: 'That isn’t your game.' });
+  if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); }
+  else if (m.phase !== 'finished') { m.phase = 'finished'; m.finished = Math.floor(now() / 1000); m.reason = 'closed'; m.revision++; persist(m); for (const o of sockets.get(m.id) || []) send(o, { type: 'MATCH_CLOSED' }); }
+  send(ws, { type: 'MATCH_ENDED', session: m.id, result: m.reason });
+}
 function legalPlacement(m, seat, shipId, cells) {
   if (!cells) return false;
   const taken = new Set(seat.ships.filter(s => s.id !== shipId).flatMap(s => s.cells));
@@ -475,6 +487,7 @@ function handle(ws, raw) {
   if (msg.type === 'JOIN_MATCH') return joinMatch(ws, msg, false);
   if (msg.type === 'RESUME_MATCH') return joinMatch(ws, msg, true);
   if (msg.type === 'LIST_MATCHES') return listMatches(ws, msg);
+  if (msg.type === 'END_MATCH') return endMatch(ws, msg);
   const m = matches.get(ws.matchId);
   if (!m || ws.seat == null || msg.session !== m.id) return send(ws, { error: 'Not in a match.' });
   const s = ws.seat, me = m.seats[s];
@@ -512,13 +525,13 @@ function handle(ws, raw) {
 /* ---------------- identity (guest cookie or Fridge account) ---------------- */
 function cookies(req) { const out = {}; for (const p of String(req.headers.cookie || '').split(';')) { const i = p.indexOf('='); if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); } return out; }
 const bridgeCache = new Map();
-async function fridgeUser(cookie) {
+async function bridgeUser(cookie) {   // optional SSO identity bridge (AUTH_BRIDGE); identities keep the historical "fridge:" prefix
   if (!AUTH_BRIDGE || AUTH_SECRET.length < 32 || !cookie) return null;
   const k = sha(cookie), hit = bridgeCache.get(k);
   if (hit && hit.t > now() - 60e3) return hit.u;
   let u = null;
   try {
-    const r = await fetch(AUTH_BRIDGE, { headers: { 'X-Whaleship-Auth': AUTH_SECRET, Cookie: `fridgego=${encodeURIComponent(cookie)}` }, signal: AbortSignal.timeout(2500) });
+    const r = await fetch(AUTH_BRIDGE, { headers: { 'X-Whaleship-Auth': AUTH_SECRET, Cookie: `${AUTH_COOKIE}=${encodeURIComponent(cookie)}` }, signal: AbortSignal.timeout(2500) });
     const j = r.ok ? await r.json() : {}; if (j && j.sub) u = { sub: String(j.sub), name: clean(j.name) || 'Captain' };
   } catch {}
   bridgeCache.set(k, { t: now(), u }); if (bridgeCache.size > 2000) bridgeCache.clear();
@@ -528,7 +541,7 @@ async function identify(req) {
   const c = cookies(req);
   let guest = /^[a-f0-9]{48}$/.test(c.ws_guest || '') ? c.ws_guest : null, setCookie = null;
   if (!guest) { guest = rid(24); setCookie = `ws_guest=${guest}; Path=${BASE}; Max-Age=63072000; HttpOnly; Secure; SameSite=Lax`; }
-  const u = await fridgeUser(c.fridgego);
+  const u = await bridgeUser(c[AUTH_COOKIE]);
   const identity = u ? 'fridge:' + u.sub : 'guest:' + sha(guest).slice(0, 24);
   return { identity, authed: !!u, name: u ? u.name : guestName(sha(guest)), setCookie, pub: sha(identity).slice(0, 16) };
 }
@@ -545,7 +558,7 @@ const server = http.createServer(async (req, res) => {
     if (!url.pathname.startsWith(BASE)) { res.writeHead(404); return res.end(); }
     const p = url.pathname.slice(BASE.length) || '/';
     if (p === '') { res.writeHead(301, { Location: BASE + '/' + url.search }); return res.end(); }
-    if (p === '/api/profile') { const id = await identify(req); return json(res, 200, { name: id.name, authenticated: id.authed, identity: id.pub }, id.setCookie ? { 'Set-Cookie': id.setCookie } : {}); }
+    if (p === '/api/profile') { const id = await identify(req); return json(res, 200, { name: id.name, authenticated: id.authed, identity: id.pub, inviteBase: INVITE_BASE }, id.setCookie ? { 'Set-Cookie': id.setCookie } : {}); }
     if (p === '/api/metrics') { const active = [...matches.values()].filter(m => m.phase !== 'finished').length; return json(res, 200, { status: 'operational', infrastructure: { active_workers: active, max_workers: MAX_ACTIVE, backend: 'whaleship2', restarts: 0 } }); }
     if (p === '/api/leaderboard') return json(res, 200, leaderboard(['multiplayer', 'easy', 'normal', 'hard'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'multiplayer', url.searchParams.get('period')));
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }

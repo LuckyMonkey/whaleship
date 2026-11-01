@@ -102,3 +102,13 @@ test('LIST_MATCHES: status of every game you hold a seat in, nothing for wrong c
   for (const g of res.matches) { assert.equal(g.phase, 'playing'); assert.equal(g.myTurn, true); assert.equal(g.seat, 0); assert.ok(g.opponent); assert.equal(g.manifest, undefined); assert.equal(g.ships, undefined); }
   a.close(); b.close(); c.close();
 });
+
+test('END_MATCH: forfeits a game in progress from anywhere; needs the seat credential', async () => {
+  const a = await solo(), c = client(); await c.open;
+  assert.ok((await c.send({ type: 'END_MATCH', session: a.st.id, credential: 'wrong' })).error);
+  const r = await c.send({ type: 'END_MATCH', session: a.st.id, credential: a.created.credential });
+  assert.equal(r.type, 'MATCH_ENDED'); assert.equal(r.result, 'forfeit');
+  const l = await c.send({ type: 'LIST_MATCHES', matches: [{ session: a.st.id, credential: a.created.credential }] });
+  assert.equal(l.matches[0].phase, 'finished'); assert.notEqual(l.matches[0].winner, l.matches[0].seat);
+  a.close(); c.close();
+});

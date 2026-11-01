@@ -146,7 +146,8 @@ function invitation(value) {
 }
 function join(id) { if (!/^[a-f0-9]{32}$/.test(id || '')) { toast('That invitation is not valid. Paste the complete link.'); return; } const credential = seatKeys[id]; raw({type: credential ? 'RESUME_MATCH' : 'JOIN_MATCH', session: id, credential, name: myName()}); }
 function historyReplace() { H.replaceState(null, '', location.pathname); }
-const inviteUrl = id => `https://fridge.run/whaleship?j=${toShort(id)}`;
+const gameUrl = () => profile.inviteBase || (location.origin + location.pathname.replace(/[^/]*$/, ''));   // configurable via INVITE_BASE
+const inviteUrl = id => `${gameUrl()}?j=${toShort(id)}`;
 function syncUrl() { if (state?.mode === 'multiplayer' && state.phase !== 'finished') { const q = '?j=' + toShort(state.id); if (location.search !== q || location.hash) H.replaceState(null, '', location.pathname + q); } else if (/(join|j)=/.test(location.search + location.hash)) historyReplace(); }
 function showMenu() { state = null; active = null; queue = []; hidden.home.clear(); hidden.target.clear(); hiddenSunk.clear(); held = null; armed = null; targets.clear(); view = 'target'; saveSession(); syncUrl(); setSize(chosenSize); autoZoom(); render(); }
 
@@ -165,6 +166,7 @@ function connect() {
       return;
     }
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
+    if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game ended.'); return; }
     pending = false;
     if (msg.error) {
       log(`Error response from daemon: ${msg.error}`, 'error'); audio.sound('error');
@@ -254,6 +256,17 @@ function alertGame(id, title, body) {
   audio.sound('turn'); toast(`${title} · open 🗂 Games to switch`);
   if ('Notification' in window && Notification.permission === 'granted') { try { const n = new Notification(title, {body, tag: 'whaleship-' + id}); n.onclick = () => { window.focus(); switchGame(id); n.close(); }; } catch {} }
 }
+function forgetGame(id) {
+  delete seatKeys[id]; games.delete(id); const m = matches(); delete m[id]; try { localStorage.setItem('whaleship:matches', JSON.stringify(m)); } catch {}
+  if (state?.id === id && state.phase !== 'finished') showMenu(); else saveSession();
+  paintGames(); if ($('#new-dialog').open) renderGameList();
+}
+// End a game from the list: in progress → forfeit, not started → closed, finished → just cleared from the list
+function endGame(id) {
+  const g = games.get(id);
+  if (!g || g.phase === 'finished') { forgetGame(id); return; }
+  raw({type: 'END_MATCH', session: id, credential: seatKeys[id]}); audio.sound('select');
+}
 function switchGame(id) { if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); }
 function paintGames() {
   const waiting = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length, b = $('#games-btn');
@@ -270,9 +283,15 @@ function renderGameList() {
     const mode = g?.mode || l.mode, opp = g?.opponent || l.opp, here = id === state?.id;
     const who = mode === 'multiplayer' ? (opp ? `vs ${opp}` : 'waiting for a friend') : `solo · ${mode}`;
     const st = here ? '👁 on screen' : !g ? '… checking' : g.phase === 'finished' ? (g.winner === g.seat ? '🏆 you won' : '💀 you lost') : g.phase === 'playing' ? (g.myTurn ? '🟢 your move' : '⏳ their move') : (opp || mode !== 'multiplayer') ? '⚓ deploying' : '📨 invite sent';
+    const item = document.createElement('div'); item.className = 'recent-item';
     const b = document.createElement('button'); b.className = 'recent-row' + (g?.myTurn && !here ? ' hot' : ''); b.disabled = here;
     b.innerHTML = '<code></code><span></span><b></b>'; b.children[0].textContent = g ? `turn ${g.turn_number || 0}` : '—'; b.children[1].textContent = who; b.children[2].textContent = st;
-    b.onclick = () => switchGame(id); list.append(b);
+    b.onclick = () => switchGame(id);
+    const finished = g?.phase === 'finished', x = document.createElement('button'); x.className = 'recent-end'; x.textContent = '✕';
+    x.title = finished ? 'Remove from the list' : g?.phase === 'playing' ? 'End this game (counts as a forfeit)' : 'Close this game';
+    x.setAttribute('aria-label', x.title);
+    x.onclick = () => { if (finished) return endGame(id); if (x.dataset.armed) return endGame(id); x.dataset.armed = '1'; x.textContent = 'End?'; setTimeout(() => { delete x.dataset.armed; x.textContent = '✕'; }, 3000); };
+    item.append(b, x); list.append(item);
   }
   $('#recent-wrap').hidden = !rows.length;
   $('#notify-wrap').hidden = !('Notification' in window) || Notification.permission !== 'default';
@@ -1029,6 +1048,7 @@ function renderHud() {
   $('#cta-ready').disabled = !state || state.me.ships.length !== FLEET.length || state.me.ready || !connected;
   $('#cta-shuffle').disabled = !state || state.me.ready || !connected;
   document.body.dataset.phase = !state ? 'menu' : state.phase;
+  $('#end-btn').hidden = !state || state.phase === 'finished';
 }
 function specList() {
   if (!state) return [];
@@ -1282,6 +1302,7 @@ $('#share-copy').onclick = () => { copy($('#share-url').value, 'Link copied — 
 $('#share-native').onclick = async () => { try { await navigator.share({title: 'WHALESHIP', text: 'Battle me in WHALESHIP 🐋📡 — tap to play:', url: $('#share-url').value}); } catch {} };
 $('#share-url').onclick = () => $('#share-url').select();
 $('#new-game').onclick = () => openNewGame(); $('#games-btn').onclick = () => openNewGame();
+$('#end-btn').onclick = () => { if (!state || state.phase === 'finished') return; $('#leave-warning').textContent = state.phase === 'playing' ? 'End this game now? It counts as a forfeit — your opponent wins.' : 'Close this game? Nobody has started playing yet.'; $('#leave-dialog').showModal(); };
 $('#notify-enable').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 Desktop notifications on — we’ll tell you when it’s your move in any game.' : 'Notifications stay off. The 🗂 badge and tab title still show waiting games.'); } catch {} renderGameList(); };
 document.querySelectorAll('#new-dialog [data-mode]').forEach(b => b.onclick = () => { $('#new-dialog').close(); $('#result-overlay').hidden = true; openTerminal(false); newGame(b.dataset.mode, chosenSize); });
 $('#cta-shuffle').onclick = () => { held = null; act('RANDOMIZE_FLEET'); audio.sound('place'); };
@@ -1290,7 +1311,7 @@ $('#cta-fire').onclick = () => fireVolley();
 document.querySelectorAll('[data-rules]').forEach(b => b.onclick = () => { chosenRules = b.dataset.rules; try { localStorage.setItem('whaleship:rules', chosenRules); } catch {} audio.sound('select'); toast(`${RULE_INFO[chosenRules].label}: ${{classic: 'plain salvo battleship — no specials.', warfare: 'each creature powers abilities; specials have charges + cooldowns.', chaos: 'warfare plus random Kubernetes events (self-healing, CrashLoopBackOff, drains…).'}[chosenRules]}`); render(); });
 $('#cta-forfeit').onclick = () => act('CLAIM_FORFEIT');
 $('#cta-again').onclick = () => { $('#result-overlay').hidden = true; newGame(state?.mode || 'multiplayer', state?.size || chosenSize); };
-$('#cta-share').onclick = () => { const won = state?.winner === state?.seat, mine = state?.attacks.filter(a => a.seat === state.seat && !a.reveal) || []; share('https://fridge.run/whaleship', `WHALESHIP ${SECT() ? 'sector map' : N + '×' + HT} incident report: ${won ? 'enemy cluster CATASTROPHIC FAILURE 🏆' : 'it works on my machine 💀'} · ${state?.turn_number} turns · ${mine.length} packets · ${mine.filter(a => a.hit).length} hits.`); };
+$('#cta-share').onclick = () => { const won = state?.winner === state?.seat, mine = state?.attacks.filter(a => a.seat === state.seat && !a.reveal) || []; share(gameUrl(), `WHALESHIP ${SECT() ? 'sector map' : N + '×' + HT} incident report: ${won ? 'enemy cluster CATASTROPHIC FAILURE 🏆' : 'it works on my machine 💀'} · ${state?.turn_number} turns · ${mine.length} packets · ${mine.filter(a => a.hit).length} hits.`); };
 $('#cta-notify').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 We’ll ping you when it’s your move (keep this tab open in the background).' : 'Notifications are off — the tab title still shows 🟢 on your turn.'); } catch {} render(); };
 $('#view-target').onclick = () => slideTo('target'); $('#view-home').onclick = () => slideTo('home');
 $('#result-overlay').onclick = () => $('#result-overlay').hidden = true;

@@ -421,3 +421,9 @@ body:not(.term-watch) .pane-watch{display:none}
 .term-toggle{min-height:36px;padding:0 12px;border:1px solid #2a3a33;border-radius:8px;background:#0b120f;color:#b8f5d0;font:inherit;font-size:12px}
 .term-toggle[aria-pressed=true]{border-color:#23e4d0;color:#23e4d0}
 .screen-term .chips{padding-bottom:max(6px,env(safe-area-inset-bottom))}
+
+/* end a game: in the top bar and per row in Games */
+.recent-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch}
+.recent-end{min-width:46px;padding:0 10px;border:1px solid #ff754f66;border-radius:10px;background:#2a1210;color:#ffb19c;font:800 .8rem var(--mono);cursor:pointer}
+.recent-end[data-armed]{background:#c8352b;color:#fff;border-color:#ff754f}
+.icon.end{border-color:#ff754f88}

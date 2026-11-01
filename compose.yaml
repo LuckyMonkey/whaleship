@@ -1,25 +1,20 @@
-name: whaleship2
+# WHALESHIP — one small container: game server + static client. Data persists in ./data.
+# Configure with environment variables (see README). For a reverse proxy, set ALLOWED_ORIGINS to your public origin.
+name: whaleship
 services:
   api:
     build: .
-    image: whaleship2:dev
-    container_name: whaleship2-api
+    image: whaleship:dev
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 256m
-    cpus: 1.0
     pids_limit: 64
-    env_file: [.env]                      # AUTH_SECRET for the Fridge identity bridge (never logged)
+    ports: ["${WHALESHIP_PORT:-8080}:8080"]
     environment:
-      AUTH_BRIDGE: http://fridge-caddy:8088/__whaleship_identity
-      ALLOWED_ORIGINS: https://go.fridge.run
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     volumes:
-      - /srv/data/whaleship2:/data
-      - /srv/data/whaleship2-import:/import:ro
+      - ./data:/data
     tmpfs: ["/tmp:size=8m,noexec,nosuid"]
-    networks: [edge]
     logging: {options: {max-size: 5m, max-file: "2"}}
-networks:
-  edge: {external: true, name: fridge-homepage_default}
