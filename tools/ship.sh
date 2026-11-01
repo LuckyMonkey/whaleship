@@ -6,6 +6,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 VER=${1:?usage: tools/ship.sh <version>}; B="$VER-$(date -u +%Y%m%d%H%M%S)"
+( cd "$ROOT" && node --test test/ >/tmp/whaleship-test.log 2>&1 ) || { echo "tests failed — not deploying (see /tmp/whaleship-test.log)"; exit 1; }
 D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
 cp -r "$ROOT"/{server.js,names.js,compose.yaml,Dockerfile,.dockerignore,package.json,package-lock.json,web} "$D"/
 echo "$B" > "$D/web/BUILD"

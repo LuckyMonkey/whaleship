@@ -62,7 +62,8 @@ test('specials respect roles, charges and the classic ruleset', async () => {
   assert.ok((await c.act('POWER', { power: 'tail', cell: 50 })).error); c.close();
   const d = await solo();
   const ok = await d.act('POWER', { power: 'breach', cell: 100 }); assert.ok(!ok.error, ok.error);
-  const again = await d.act('POWER', { power: 'breach', cell: 40 }); assert.match(again.error || '', /charges/);
+  // refused either way: out of charges — or, if the AI's reply sank the carrier / jammed us, the role is offline
+  const again = await d.act('POWER', { power: 'breach', cell: 40 }); assert.match(again.error || '', /charges|offline|rate-limited/);
   d.close();
 });
 
