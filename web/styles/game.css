@@ -381,3 +381,23 @@ body.r3d .sea{background:#5fb4e6}
 body.r3d.zoomed .world3d,body.r3d .world3d{cursor:crosshair}
 .inspect{position:absolute;z-index:9;left:12px;bottom:calc(var(--hud-h,150px) + 10px);margin:0;max-width:min(92%,420px);padding:10px 12px;border:1px solid #23e4d088;border-radius:10px;background:#05080af0;color:#b8f5d0;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;box-shadow:0 10px 30px #0008}
 @media (min-width:900px) and (min-aspect-ratio:1/1){.inspect{bottom:16px}}
+
+/* ================= v0.13: phone layout — tap the map, compact controls that always fit ================= */
+@media (max-width:699px), (pointer:coarse) and (max-width:1024px){
+  .hud{padding:6px 8px;padding-bottom:max(6px,env(safe-area-inset-bottom));gap:6px;width:100%}
+  .hint{font-size:.7rem;padding:5px 10px}
+  .cta-row{display:flex!important;flex-direction:column;flex-wrap:nowrap;gap:6px}
+  .cta-row>*,.cta-row>.big.fire,.cta-row>.specials,.cta-row>.rules,.cta-row>.sizes{flex:0 0 auto!important;width:100%;min-width:0}
+  .board-label{display:none}
+  .big{min-height:48px;padding:6px 10px;border-radius:12px}
+  .big small{font-size:.55rem}
+  #cta-fire{min-height:52px}
+  /* specials (weapons) in one swipeable row */
+  .specials{display:flex!important;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .specials::-webkit-scrollbar{display:none}
+  .sp{flex:0 0 auto;min-width:86px;min-height:42px}
+  .term-tab{min-height:30px;padding:4px 12px}
+  .rules button{min-height:40px}
+  .views{top:56px}.views button{min-height:38px;padding:0 14px;font-size:.78rem}
+  .zoom-ctl{top:104px}
+}

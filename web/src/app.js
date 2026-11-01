@@ -93,6 +93,7 @@ function parseCoord(v) {
 const prefSize = () => 36;   // the 6×6 sector map is the only play mode (older matches still load in their own size)
 let chosenSize = prefSize();
 const coarse = () => matchMedia('(pointer:coarse)').matches;
+const touchLayout = () => coarse() || innerWidth < 700;   // phones/tablets: tap the map; no sector keypad
 
 /* ---------------- helpers ---------------- */
 let toastTimer;
@@ -603,9 +604,7 @@ function tileTap(c) {
   if (armed && PI(armed).own) { if (view !== 'home') { slideTo('home'); return; } if (!myTurn()) return; aimAt(c); return; }
   if (view === 'home') { slideTo('target'); return; }
   if (!myTurn()) { toast(`${oppName()} is aiming — hang tight.`); bump('#turn'); return; }
-  // Sector map: a mouse click aims at the exact cell; on touch the first tap picks the sector (the keypad then picks 1–9),
-  // a second tap inside the already-selected sector aims directly.
-  if (SECT() && !armed && lastPointer !== 'mouse' && sel !== secOf(c)) { selectSector(secOf(c)); return; }
+  // Tap/click aims at the exact square (pinch or drag to zoom and pan); typing a sector then 1–9 is the keyboard route.
   sel = -1; aimAt(c);
 }
 function selectSector(si) {
@@ -653,7 +652,7 @@ function fireVolley() {
 }
 
 /* ---------------- zoom + pan: starts with ~80% of the board on screen; drag to look around ---------------- */
-const baseZoom = () => SIZE === 36 ? (R3 ? 1.06 : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
+const baseZoom = () => SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
 let planeResize = 0;
 function applyZoom(glide = false) {
   const w = $('#zoom'); if (!w) return;
@@ -978,15 +977,16 @@ function renderHud() {
       if (armed) hint = `${PI(armed).emoji} ${PI(armed).own ? 'tap a square in YOUR waters' : 'tap enemy water'} to ${PI(armed).what}${armed === 'tail' ? ` (${tailVertical ? 'column' : 'row'})` : ''} · tap the button again to ${armed === 'tail' && !tailVertical ? 'turn it ↕' : 'cancel'}`;
       else if (settings.confirm && salvo() === 1) hint = targets.size ? `locked on ${coord([...targets][0])} — PING!` : '🎯 tap a square in enemy waters, then PING';
       else hint = salvo() > 1 ? (targets.size ? `🎯 ${need} more — or PING now` : `🎯 tap ${salvo()} squares in enemy waters`) : '🎯 tap a square in enemy waters to ping it';
-      ids = [...(SECT() ? ['keypad'] : []), ...(targets.size || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
-      if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like J5 · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${LETTERS[sel]} → now 1–9`;
+      ids = [...(SECT() && !touchLayout() ? ['keypad'] : []), ...(targets.size || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
+      if (SECT() && !armed && touchLayout()) hint = need <= 0 ? '📡 queue full — tap TRANSMIT' : `👆 tap ${need} square${need === 1 ? '' : 's'} on the enemy map · pinch to zoom`;
+      else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like J5 · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${LETTERS[sel]} → now 1–9`;
       pulse = targets.size && (need <= 0 || settings.confirm) ? 'cta-fire' : null;
       $('#cta-fire').disabled = !targets.size;
     } else { hint = state.mode === 'multiplayer' ? `${oppName()} is aiming · no time limit — come back anytime` : '🤖 the AI is aiming…'; if (canNotify && state.mode === 'multiplayer') ids = ['cta-notify']; }
     if (claim && !animating) ids.push('cta-forfeit');
   } else { hint = state.winner === state.seat ? 'deployment successful · again?' : 'this incident has been logged · rematch?'; ids = ['cta-again', 'cta-share']; pulse = 'cta-again'; }
   $('#hint').textContent = hint ? '❯ ' + hint : ''; showCtas(ids, pulse); renderKeypad(ids.includes('keypad'));
-  $('#fire-label').textContent = SECT() ? `📡 TRANSMIT ${targets.size}/${salvo()} ⏎` : salvo() > 1 ? `📡 PING ${targets.size}/${salvo()}` : '📡 PING';
+  $('#fire-label').textContent = SECT() ? `📡 TRANSMIT ${targets.size}/${salvo()}${touchLayout() ? '' : ' ⏎'}` : salvo() > 1 ? `📡 PING ${targets.size}/${salvo()}` : '📡 PING';
   $('#fire-cmd').textContent = `$ ping ${[...targets].map(c => lc(c)).join(' ') || '—'}`;
   renderSpecials(ids.includes('specials'));
   document.querySelectorAll('[data-rules]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rules === chosenRules)));
@@ -1284,12 +1284,13 @@ document.addEventListener('keydown', e => {
     if (k === 'backspace') { e.preventDefault(); backspace(); return; }
     if (k === 'escape' && sel >= 0) { e.preventDefault(); sel = -1; render(); return; }
     if (k === ' ' && armed && PI(armed).rot) { e.preventDefault(); rotN = (rotN + 1) & 3; if (hover >= 0) preview(hover); render(); return; }
+    if (k === ' ') { e.preventDefault(); if (targets.size) fireVolley(); return; }   // Space or Enter transmits
   }
   if (k === ' ' && armed && PI(armed).rot) { e.preventDefault(); rotN = (rotN + 1) & 3; if (hover >= 0) preview(hover); render(); return; }
   if (k === 'r' && deploying() && !state.me.ready && held != null) { e.preventDefault(); rotateShip(held); }
   else if (k === 'r' && armed === 'tail') { tailVertical = !tailVertical; if (hover >= 0) preview(hover); render(); }
   else if (k === 'escape') { held = null; armed = null; targets.clear(); area = []; openTerminal(false); render(); }
-  else if (k === 'f' && targets.size) fireVolley();
+  else if ((k === 'f' || k === ' ' || k === 'enter') && targets.size && myTurn()) { e.preventDefault(); fireVolley(); }
   else if (k === 'v' && state?.phase === 'playing') slideTo(view === 'target' ? 'home' : 'target');
   else if (k === '+' || k === '=') setZoom(zoom.z * 1.3, 0, 0, true); else if (k === '-') setZoom(zoom.z / 1.3, 0, 0, true); else if (k === '0') autoZoom();
 });
