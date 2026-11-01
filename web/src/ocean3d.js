@@ -3,7 +3,7 @@
 import * as THREE from './vendor/three.module.min.js';
 
 const QUALITY = {
-  low: {dpr: 1, shadows: false, oceanSeg: 56, foam: 96, aa: false},
+  low: {dpr: 1, shadows: false, oceanSeg: 56, foam: 96, aa: false, fps: 30},
   medium: {dpr: 1.25, shadows: true, oceanSeg: 96, foam: 128, aa: true},
   high: {dpr: 2, shadows: true, oceanSeg: 180, foam: 192, aa: true},
 };
@@ -58,16 +58,18 @@ void main(){
   // Conway foam in world space: drift (advection) + slight domain warp; prev→next blended with smoothstep
   vec2 drift = vec2(uTime * .06, uTime * .025);   // slow, coherent drift like a swell
   vec2 warp = vec2(noise(vWorld.xz * .7 + uTime * .05), noise(vWorld.xz * .7 - uTime * .04 + 7.)) - .5;
-  vec2 uv = (vWorld.xz + drift) / uFoamSize + warp * .006;
+  vec2 uv = (vWorld.xz + drift) / uFoamSize + warp * .0015;   // a hint of swell, squares stay squares
   float t = uMix * uMix * (3. - 2. * uMix);
-  // soft 5-tap sample: cells melt into neighbouring cells like foam, but each Conway cell is still its own lump
-  vec2 dx = vec2(uTexel * .6, 0.), dy = vec2(0., uTexel * .6);
-  float a0 = texture2D(uPrev, uv).r * 2. + texture2D(uPrev, uv + dx).r + texture2D(uPrev, uv - dx).r + texture2D(uPrev, uv + dy).r + texture2D(uPrev, uv - dy).r;
-  float b0 = texture2D(uNext, uv).r * 2. + texture2D(uNext, uv + dx).r + texture2D(uNext, uv - dx).r + texture2D(uNext, uv + dy).r + texture2D(uNext, uv - dy).r;
-  float v = mix(a0, b0, t) / 6.;
-  float edge = (noise(vWorld.xz * 3. + uTime * .1) - .5) * .2;
-  float foam = smoothstep(.38 + edge, .72 + edge, v) * (.75 + .25 * noise(vWorld.xz * 1.7 - uTime * .07));
-  float core = smoothstep(.62, .85, v);                       // brighter centres keep individual cells readable up close
+  // Crisp Conway cells: each one is a rounded square read at its texel centre. Its size and brightness follow the
+  // eased intensity, so a cell grows in when born and shrinks away when it dies — smooth, but clearly Game of Life.
+  float cells = 1. / uTexel;
+  vec2 g = uv * cells, id = floor(g), f = fract(g) - .5, tuv = (id + .5) / cells;
+  float v = mix(texture2D(uPrev, tuv).r, texture2D(uNext, tuv).r, t);
+  float hs = .12 + .3 * v, rr = .08;
+  vec2 q = abs(f) - (hs - rr); float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - rr;
+  float aa = fwidth(d) * 1.1 + .01;
+  float foam = (1. - smoothstep(-aa, aa, d)) * smoothstep(.05, .4, v) * (.82 + .18 * noise(id * .37 + uTime * .05));
+  float core = foam * smoothstep(.8, 1., v) * .35;
   float mask = mix(.1, 1., smoothstep(.5, 4.5, outside(vWorld.xz)));   // quieter on the tactical board, never cut off abruptly
   float crest = smoothstep(.02, .12, vH) * .35;                // foam gathers on wave crests
   col = mix(col, vec3(.92, .97, 1.), clamp(foam * (.55 + crest) + core * .25, 0., 1.) * mask * uFoamStrength);
@@ -316,7 +318,7 @@ export function buildIcebreaker() {
 export function createWorld(canvas, {quality = 'medium'} = {}) {
   const Q = QUALITY[quality] || QUALITY.medium;
   const renderer = new THREE.WebGLRenderer({canvas, antialias: Q.aa, powerPreference: 'high-performance', alpha: false});
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, Q.dpr)); renderer.shadowMap.enabled = Q.shadows; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, Q.dpr)); renderer.shadowMap.enabled = Q.shadows; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.shadowMap.autoUpdate = false;   // refreshed every 3rd frame below
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
   const scene = new THREE.Scene(), HORIZON = new THREE.Color('#5fb4e6');
   scene.background = HORIZON; scene.fog = new THREE.Fog(HORIZON, 70, 125);
@@ -332,7 +334,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   const life = new Life(Q.foam), mk = () => { const t = new THREE.DataTexture(new Uint8Array(Q.foam * Q.foam), Q.foam, Q.foam, THREE.RedFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true; return t; };
   const prev = mk(), next = mk(); next.image.data.set(life.a); prev.image.data.set(life.a); prev.needsUpdate = next.needsUpdate = true;
   const oceanMat = new THREE.ShaderMaterial({vertexShader: OCEAN_VERT, fragmentShader: OCEAN_FRAG, fog: true,
-    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {uTime: {value: 0}, uMix: {value: 0}, uFoamSize: {value: Q.foam * .23}, uFoamStrength: {value: .6}, uTexel: {value: 1 / Q.foam}, uPrev: {value: null}, uNext: {value: null},
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {uTime: {value: 0}, uMix: {value: 0}, uFoamSize: {value: Q.foam * .3}, uFoamStrength: {value: .6}, uTexel: {value: 1 / Q.foam}, uPrev: {value: null}, uNext: {value: null},
       uBoard: {value: new THREE.Vector4(-7.5, -7.5, 7.5, 7.5)}, uSun: {value: sun.position.clone().normalize()}, uView: {value: DIR.clone()}, uDeep: {value: new THREE.Color('#0b4f86')}, uShallow: {value: new THREE.Color('#1f8fcf')}}])});
   oceanMat.uniforms.uPrev.value = prev; oceanMat.uniforms.uNext.value = next;
   const oceanGeo = new THREE.PlaneGeometry(240, 240, Q.oceanSeg, Q.oceanSeg); oceanGeo.rotateX(-Math.PI / 2); scene.add(new THREE.Mesh(oceanGeo, oceanMat));
@@ -395,8 +397,11 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   const creatures = new Map();
   const GEN_MS = 650, vis = new Float32Array(Q.foam * Q.foam); for (let i = 0; i < vis.length; i++) vis[i] = life.a[i] / 255;
   let genT = 0, last = performance.now(), raf = 0, frames = 0, fpsT = 0, fps = 0, time = 0, nextSpout = 4;
+  let lastDraw = 0, frameNo = 0;
   function tick(now) {
     raf = requestAnimationFrame(tick);
+    if (Q.fps && now - lastDraw < 1000 / Q.fps - 2) return;   // frame cap on phones (saves battery)
+    lastDraw = now;
     const dt = Math.min(.05, (now - last) / 1000); last = now; time += dt; genT += dt * 1000;
     if (genT >= GEN_MS) { genT %= GEN_MS; prev.image.data.set(next.image.data); life.step();
       // Conway decides alive/dead; the visible foam eases toward it, so cells bloom in and dissolve out over ~3 generations
@@ -408,7 +413,8 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     for (const c of cruisers) { c.a += dt * c.speed; const R = Math.max(N, HT) * .5 + c.r, x = Math.cos(c.a) * R * 1.15, z = Math.sin(c.a) * R; c.m.position.set(x, Math.sin(time * 1.1 + c.a) * .04, z); c.m.rotation.y = -c.a - (c.speed > 0 ? Math.PI / 2 : -Math.PI / 2); c.m.rotation.z = Math.sin(time * .9 + c.a) * .03; c.m.userData.update?.(time); }
     for (const o of deco) o.userData.update?.(time, dt);
     for (const c of creatures.values()) if (c.visible) c.userData.update(time, dt);
-    if (time > nextSpout) { nextSpout = time + 5 + Math.random() * 6; const vis = [...creatures.values()].filter(c => c.visible && c.userData.kind % 5 <= 1); vis[Math.floor(Math.random() * vis.length)]?.userData.spout(); }
+    if (time > nextSpout) { nextSpout = time + 5 + Math.random() * 6; const vis = [...creatures.values()].filter(c => c.visible && c.userData.kind % 5 <= 1); const w = vis[Math.floor(Math.random() * vis.length)]; if (w) { w.userData.spout(); api.onSpout?.(); } }
+    if (Q.shadows && frameNo++ % 3 === 0) renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, camera);
     frames++; fpsT += dt; if (fpsT >= 1) { fps = frames / fpsT; frames = 0; fpsT = 0; }
   }

@@ -792,7 +792,8 @@ async function resolveStrike(a, incoming, small) {
   } else if (a.hit) {
     fxBurst(p, '💥', small ? 46 : 78); fxSparks(p, small ? 10 : 22, ['#ffd34d', '#ff754f', '#fff6dd', '#2f7bff']); fxRing(p, 6, small ? 40 : 70, '#ff754f');
     fxBurst({x: p.x + 16, y: p.y - 26}, '📦', 24, 1000, 120);       // a container gets knocked off
-    if (!small) fxFlash(); bump('#board-wrap'); audio.sound('hit', incoming); fxText(p, incoming ? 'OUCH' : 'HIT', '#ffd34d', small ? 20 : 28);
+    if (!small) fxFlash(); bump('#board-wrap'); audio.sound('hit', incoming);
+    if (victim && F(victim.id).kind % 5 === 0) setTimeout(() => audio.sound('whale', true), 350);   // the whale feels that fxText(p, incoming ? 'OUCH' : 'HIT', '#ffd34d', small ? 20 : 28);
     log(incoming ? `${ts()} container die ${lc(a.cell)} (exitCode=137, image=${victim ? IMG(victim.id) : '?'}, name=${victim ? POD(victim.id) : '?'})`
       : `64 bytes from ${ip(a.cell, true)} (${lc(a.cell)}): icmp_seq=${stats.sent} ttl=64 → HIT  container killed (exitCode=137)${a.health != null ? `\n  TARGET ACQUIRED · CONTAINER HEALTH: ${a.health}%` : ''}`, incoming ? 'error' : 'hit');
     if (a.container) log(`$ docker events --since 1s\ncontainer die  name=${a.container.name}  image=${a.container.image}  exitCode=137\n⚠ UNEXPECTED MARITIME TERMINATION`, incoming ? 'error' : 'event');
@@ -854,7 +855,7 @@ async function playNext() {
     const P = PI(a.power), g2 = geo(), pts = a.area.map(c => cellPoint(c, g2)), ctr = cellPoint(a.cell, g2), col = incoming ? '#ff8a5c' : '#7fe3ff';
     pts.forEach((q, i) => fxRing(q, 3, q.w * .7, col, 700, i * 50, 2.5));
     if (R3) {   // the creature really does it: a whale breaches / slams its flukes, or a squid rises and grabs
-      audio.sound(a.power === 'tail' ? 'tail' : 'launch', incoming);
+      audio.sound('whale', incoming); setTimeout(() => audio.sound(a.power === 'tail' ? 'tail' : 'miss', incoming), a.power === 'breach' ? 1200 : 900);
       await R3.stunt(a.cell, a.power === 'grab' ? 'grab' : a.power === 'tail' ? 'tail' : 'breach', a.rot || 0);
       bump('#board-wrap');
     } else {
@@ -1308,7 +1309,7 @@ async function init3D() {
     if (!document.createElement('canvas').getContext('webgl2')) return null;
     const {createWorld} = await import('./ocean3d.js');
     const w = createWorld($('#world3d'), {quality: new URLSearchParams(location.search).get('q') || (coarse() ? 'low' : 'medium')});
-    document.body.classList.add('r3d'); return w;
+    document.body.classList.add('r3d'); w.onSpout = () => audio.sound('blow'); return w;
   } catch (e) { console.warn('3D unavailable, using the 2D board', e); return null; }
 }
 paintSound(); setSize(chosenSize); buildBoardEvents(); zoomGestures(); prefs.applyDocument(settings); audio.setLevels(settings); sizeFx(); sizeFoam(); autoZoom(); render();

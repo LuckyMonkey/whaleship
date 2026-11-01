@@ -14,8 +14,6 @@ sed -i "s|'\./audio\.js'|'./audio.js?v=$B'|; s|'\./settings\.js'|'./settings.js?
 sed -i "s|^const BUILD = '__BUILD__';|const BUILD = '$B';|" "$D/web/src/app.js"
 sed -i "s|'\./settings\.js'|'./settings.js?v=$B'|" "$D/web/src/control.js"
 sed -i "s|url('\./mono\.css')|url('./mono.css?v=$B')|" "$D/web/styles/game.css"
-sed -i "s|\./src/ocean-preview\.js\"|./src/ocean-preview.js?v=$B\"|; s|\./styles/ocean\.css\"|./styles/ocean.css?v=$B\"|" "$D/web/ocean.html"
-sed -i "s|'\./ocean3d\.js'|'./ocean3d.js?v=$B'|" "$D/web/src/ocean-preview.js"
 sed -i "s|'\./vendor/three\.module\.min\.js'|'./vendor/three.module.min.js?v=$B'|" "$D/web/src/ocean3d.js"
 sed -i "s|image: whaleship2:.*|image: whaleship2:$VER|" "$D/compose.yaml"
 grep -q "const BUILD = '$B'" "$D/web/src/app.js" && grep -q "BUILD !== '__BUILD__'" "$D/web/src/app.js" && grep -q "ocean3d.js?v=$B" "$D/web/src/app.js" && grep -q "three.module.min.js?v=$B" "$D/web/src/ocean3d.js" || { echo "stamp check failed"; exit 1; }
