@@ -1,0 +1,20 @@
+# WHALESHIP — one small container: game server + static client. Data persists in ./data.
+# Configure with environment variables (see README). For a reverse proxy, set ALLOWED_ORIGINS to your public origin.
+name: whaleship
+services:
+  api:
+    build: .
+    image: whaleship:dev
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 64
+    ports: ["${WHALESHIP_PORT:-8080}:8080"]
+    environment:
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - ./data:/data
+    tmpfs: ["/tmp:size=8m,noexec,nosuid"]
+    logging: {options: {max-size: 5m, max-file: "2"}}

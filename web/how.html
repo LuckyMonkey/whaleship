@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#050d16">
+<meta name="description" content="How to play WHALESHIP — infrastructure battleship with container-carrying whales, Kubernetes carriers and Linux icebergs.">
+<title>How to play · WHALESHIP</title>
+<link rel="stylesheet" href="./styles/how.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="./">🐋 WHALESHIP</a>
+  <nav><a href="#start">Start</a><a href="#aim">Aiming</a><a href="#fleet">Fleet</a><a href="#specials">Specials</a><a href="#modes">Modes</a><a href="#friends">Friends</a><a href="#faq">FAQ</a></nav>
+  <a class="play" href="./">Play ›</a>
+</header>
+<main>
+<section class="hero">
+  <h1>How to play</h1>
+  <p class="lead">WHALESHIP is Battleship where the ships are infrastructure. Your fleet of container-carrying whales, Kubernetes carriers and Linux icebergs hides on a 3D ocean. Find the enemy's fleet and sink every vessel before they sink yours.</p>
+  <figure class="shot"><img src="./img/fleet.webp" width="1100" height="660" alt="A fleet on the 3D ocean: a container-carrying whale, Kubernetes carrier ships, a walrus storage node, Linux icebergs with penguins and squid proxies"><figcaption>Your fleet: Moby the Docker whale, Kubernetes carriers, walrus storage, Tux icebergs and squid proxies.</figcaption></figure>
+  <ul class="facts"><li>⏱ 5–15 minutes</li><li>👥 solo vs AI, or a friend</li><li>📱 phone or desktop</li><li>🔓 no account needed</li></ul>
+</section>
+
+<section id="start">
+  <h2>Quick start</h2>
+  <ol class="steps">
+    <li><b>Pick a mode</b> on the start screen: <em>Warfare</em> is the default.</li>
+    <li><b>Play solo</b> against an AI captain (easy, normal or hard), or <b>Play a friend</b> to get an invite link.</li>
+    <li>Your fleet is <b>deployed automatically</b>. You can drag creatures to move them before you're ready (turn on manual placement in ⚙ settings).</li>
+    <li>On your turn, <b>aim at squares on the enemy map</b>, then <b>transmit</b>. Hits burn, misses splash.</li>
+    <li>Sink every enemy vessel to win. There is <b>no time limit</b> — come back whenever.</li>
+  </ol>
+</section>
+
+<section id="aim">
+  <h2>The map and aiming</h2>
+  <p>The battlefield is an 18 × 18 grid split into <b>36 sectors</b>, named <code>A</code>–<code>Z</code> then <code>0</code>–<code>9</code>, six across and six down. Every sector is a 3 × 3 block numbered like a phone keypad:</p>
+  <div class="cols">
+    <pre class="grid">A B C D E F
+G H I J K L
+M N O P Q R
+S T U V W X
+Y Z 0 1 2 3
+4 5 6 7 8 9</pre>
+    <pre class="grid small">1 2 3
+4 5 6
+7 8 9</pre>
+    <p>So <code>Q5</code> is the centre of sector Q, and <code>35</code> is the centre of sector 3. Sectors are only addresses — a vessel can sit across a sector edge.</p>
+  </div>
+  <table>
+    <tr><th></th><th>Phone</th><th>Desktop</th></tr>
+    <tr><td>Aim</td><td>Tap a square on the enemy map</td><td>Click a square, or type a sector then 1–9 (e.g. <kbd>J</kbd> <kbd>5</kbd>)</td></tr>
+    <tr><td>Zoom / look around</td><td>Pinch, drag</td><td>Scroll wheel, drag, <kbd>+</kbd> <kbd>−</kbd></td></tr>
+    <tr><td>Fire the volley</td><td>TRANSMIT</td><td>TRANSMIT, <kbd>Enter</kbd> or <kbd>Space</kbd></td></tr>
+    <tr><td>Undo a target</td><td>Tap it again</td><td><kbd>Backspace</kbd> (or click it again); <kbd>Esc</kbd> cancels a half-typed sector</td></tr>
+    <tr><td>Your map / theirs</td><td colspan="2">The <b>🎯 enemy</b> / <b>⚓ mine</b> switch (top left)</td></tr>
+  </table>
+  <figure class="shot"><img src="./img/enemy-map.webp" width="1100" height="660" loading="lazy" alt="The enemy map with burning hit marks, splash rings for misses, yellow scan signals and firewall icebergs, next to the targeting console"><figcaption>Enemy waters: burning hits, ○ misses, ? scan signals, icebergs — and the targeting console on the right.</figcaption></figure>
+  <h3>Pings per turn</h3>
+  <p>Each turn you fire a <b>salvo</b>: one ping per vessel you still have afloat, up to four. A living Kubernetes carrier adds one more. You don't have to use them all — transmit whenever you like.</p>
+  <h3>Reading the board</h3>
+  <ul class="legend">
+    <li><span class="k miss">○</span> miss — open water</li>
+    <li><span class="k hit">✕</span> hit — a container is down</li>
+    <li><span class="k sunk">✖</span> sunk vessel (wrecks show what they were)</li>
+    <li><span class="k scan">?</span> scan signal — something might be here</li>
+    <li><span class="k ice">🧊</span> firewall iceberg — no vessels, can't be targeted</li>
+    <li><span class="k decoy">☠</span> DNS decoy — not a real host</li>
+  </ul>
+</section>
+
+<section id="fleet">
+  <h2>Your fleet</h2>
+  <p>Every vessel runs part of your stack. Each square of a vessel carries one named container — sink the vessel and they all go down with it.</p>
+  <div class="cards">
+    <article><h3>🐋 Moby · docker host</h3><p>Size 6. The big whale with a container rack. Powers <b>Tail Slap</b> and <b>OOM Kill</b>.</p></article>
+    <article><h3>🚢 Kubernetes carrier · orchestrator ×2</h3><p>Size 5. Runs your pods. Powers <b>Breach</b> and <b>Packet Flood</b>, and gives you <b>+1 ping</b> per turn while one is afloat.</p></article>
+    <article><h3>🦭 Walrus · storage ×2</h3><p>Size 4. Carries your persistent volumes. Powers <b>Restore</b> — no walrus, no backups.</p></article>
+    <article><h3>🐧 Tux · Linux iceberg ×3</h3><p>Size 3. Penguin admins and server racks. Powers <b>Port Scan</b> and <b>Traceroute</b>.</p></article>
+    <article><h3>🦑 Squid · network proxy ×2</h3><p>Size 2. While a squid is alive, enemy scans only see blurred signals. Powers <b>Tentacle Grab</b> and <b>DNS Poison</b>.</p></article>
+  </div>
+  <p class="note">Lose a role and its abilities go offline — sink their Moby and they can't Tail Slap any more.</p>
+</section>
+
+<section id="specials">
+  <h2>Specials (Warfare and Chaos)</h2>
+  <p>Instead of pinging, you can spend your turn on a special. Tap its button, then tap where it lands (rotatable ones turn with ⟳ or <kbd>Space</kbd>). Each says whether it does <b>damage</b>, <b>scans</b> or <b>jams</b>. Shapes follow the real grid and cross sector edges.</p>
+  <table class="specials">
+    <tr><th>Special</th><th>Shape</th><th>What it does</th><th>Uses</th></tr>
+    <tr><td>📡 Port Scan</td><td>one sector (3×3)</td><td>Counts hosts in the sector; exact spots unless their squid masks it</td><td>2, cooldown 3</td></tr>
+    <tr><td>🛰️ Traceroute</td><td>1 square</td><td>A ping that also tells you how many squares away the nearest target is</td><td>unlimited, cooldown 2</td></tr>
+    <tr><td>🐋 Tail Slap</td><td>T (5)</td><td>Damage — rotate it to fit</td><td>1</td></tr>
+    <tr><td>🐳 Breach</td><td>+ (5)</td><td>Damage</td><td>1</td></tr>
+    <tr><td>🦑 Tentacle Grab</td><td>L (5)</td><td>Damage — rotate it to fit</td><td>1</td></tr>
+    <tr><td>🌊 Packet Flood</td><td>diamond (13)</td><td>No damage: every vessel it touches is <em>cordoned</em> for 2 turns and their specials jam</td><td>1</td></tr>
+    <tr><td>💀 OOM Kill</td><td>1 square</td><td>Aim at a damaged vessel and the whole thing goes down</td><td>1</td></tr>
+    <tr><td>☠️ DNS Poison</td><td>1 square (yours)</td><td>Plants a decoy in your waters that shows up on their scans. Free action</td><td>1</td></tr>
+    <tr><td>💾 Restore</td><td>1 square (yours)</td><td>Repairs one damaged (not sunk) segment. Free action</td><td>1</td></tr>
+  </table>
+</section>
+
+<section id="modes">
+  <h2>Modes</h2>
+  <div class="cards">
+    <article><h3>Classic</h3><p>Pure salvo battleship. No specials, no roles — just aim well.</p></article>
+    <article><h3>Warfare <small>default</small></h3><p>Roles and specials as above. Most games are played here.</p></article>
+    <article><h3>Chaos</h3><p>Warfare plus random Kubernetes events: a replica self-heals, a special hits <em>CrashLoopBackOff</em>, an image won't pull, a node gets <em>drained</em>, DNS fails, a rolling update costs a ping, or a container is <em>OOMKilled</em>. Each event explains itself in the terminal.</p></article>
+  </div>
+</section>
+
+<section id="friends">
+  <h2>Playing with friends</h2>
+  <figure class="shot narrow"><img src="./img/phones.webp" width="700" height="762" loading="lazy" alt="The game on two phones: the enemy map with a full-width TRANSMIT button and swipeable weapons, and your own fleet"><figcaption>On a phone: tap squares, pinch to zoom, TRANSMIT.</figcaption></figure>
+  <ul>
+    <li><b>Play a friend</b> gives you a link and a QR code. Whoever opens it joins your game — no account, no app.</li>
+    <li>Games have <b>no time limit</b>. Close the tab; your seat waits. If an opponent goes silent for 7 days you can claim the win.</li>
+    <li><b>Ending a game:</b> tap 🏳 in the top bar, or ✕ next to any game in 🗂 Games (tap again to confirm). A game in progress counts as a forfeit; one nobody has started just closes; finished games are cleared from the list.</li>
+    <li><b>Sign in to play anywhere:</b> with a fridge.run account (🔐 <b>Sign in</b> on the start screen or in 🗂 Games), your games follow you — open WHALESHIP on your phone, sign in, and the game waiting on you opens. Games you started as a guest move onto your account the next time you open them signed in.</li>
+    <li><b>Several games at once:</b> 🗂 <b>Games</b> lists everything you're playing and whose move it is. The badge counts games waiting on you.</li>
+    <li><b>Notifications:</b> allow them when asked (or from 🗂 Games) and your phone or computer tells you when it's your move, when a friend joins, and when a game ends — <em>even with WHALESHIP closed</em>. Tapping one opens that game.</li>
+    <li><b>On a phone:</b> add WHALESHIP to your home screen (Share → Add to Home Screen on iPhone, ⋮ → Install app on Android). On iPhone this is required for notifications.</li>
+  </ul>
+</section>
+
+<section id="terminal">
+  <h2>The terminal</h2>
+  <p>Open it with the <code>terminal ›</code> tab or the <kbd>`</kbd> key; <b>← Back to game</b> returns you. It logs everything that happens as Docker and Kubernetes output, and you can play from it:</p>
+  <pre class="cmds">ping j5 b3 q9        fire at those squares
+target K · fire 5    pick sector K, then fire at K5
+nmap q5              port scan (also traceroute, hping3, oom, dnsmasq, restic)
+docker ps            your containers and their status
+kubectl get nodes    your vessels
+new hard chaos       start a new game
+help                 everything else</pre>
+  <p class="note">The terminal is part of the game. Nothing it shows is a real system.</p>
+</section>
+
+<section id="settings">
+  <h2>Settings and accessibility</h2>
+  <p>⚙ has sound levels (effects, ocean, music), reduced motion, faster animations, high contrast, larger text, manual fleet placement and confirm-before-fire. Every sound has a visual cue, so you can play muted. If your device can't show 3D, the game falls back to a flat 2D board automatically.</p>
+</section>
+
+<section id="faq">
+  <h2>FAQ</h2>
+  <details><summary>Do I need an account?</summary><p>No. You get a random captain name stored in a cookie on this device. If you're signed in to the host site, your account name is used instead.</p></details>
+  <details><summary>What do you store?</summary><p>The state of each match (fleets, shots, turn) and a results line per finished game for the leaderboard (captain name, wins, accuracy). Finished matches are deleted after 7 days. No tracking, no ads.</p></details>
+  <details><summary>Can I keep playing on another device?</summary><p>Yes — sign in with the same account on both. Your games appear in 🗂 Games on every device, and the one waiting on you opens automatically. As a guest, your seat lives in this browser only.</p></details>
+  <details><summary>I don't get notifications.</summary><p>Check that notifications are allowed for this site in your browser settings. On iPhone, install WHALESHIP to the home screen first (iOS only delivers web notifications to installed apps). Notifications only cover games against friends — the AI answers instantly.</p></details>
+  <details><summary>The AI is too good / too easy.</summary><p>Easy fires at random, Normal hunts around hits, Hard calculates where vessels can still fit and uses specials.</p></details>
+  <details><summary>Is this affiliated with Docker or Kubernetes?</summary><p>No. WHALESHIP is an unofficial fan game that borrows the vocabulary for jokes. Container names come from Docker's open-source name generator (Apache-2.0).</p></details>
+</section>
+</main>
+<footer><a href="./">← Back to the game</a><span>WHALESHIP · 3D by three.js · QR by qrcode-generator · names from Moby (Apache-2.0)</span></footer>
+</body>
+</html>

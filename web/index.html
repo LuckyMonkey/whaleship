@@ -1,0 +1,101 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#050d16"><meta name="description" content="WHALESHIP — infrastructure battleship. Containers on whales, the ocean is a network. Send a friend the link and they're playing."><title>WHALESHIP — Sink their stack.</title><link id="favicon" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%B3%3C/text%3E%3C/svg%3E"><link rel="stylesheet" href="./styles/game.css"><link rel="manifest" href="./manifest.webmanifest"><link rel="apple-touch-icon" href="./icons/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="WHALESHIP"><script type="module" src="./src/app.js"></script></head><body class="game">
+<header class="bar">
+  <a href="/whaleship/" class="brand" aria-label="WHALESHIP home"><svg width="32" height="24" viewBox="0 0 80 60" aria-hidden="true"><path d="M7 23H60V13L76 22L67 32C64 53 20 59 9 37Z" fill="#1d63ed" stroke="#e9f8ff" stroke-width="4"/><path d="M17 10h14v15H17zm16 0h14v15H33zm16 0h10v15H49z" fill="#ffcb3b" stroke="#e9f8ff" stroke-width="3"/><circle cx="21" cy="35" r="3" fill="#e9f8ff"/></svg><span>WHALESHIP</span></a>
+  <p id="status" class="status-pill" role="status">connecting…</p>
+  <nav aria-label="Game tools">
+    <button id="end-btn" class="icon end" aria-label="End this game" title="End this game" hidden>🏳</button>
+    <button id="games-btn" class="icon games" aria-label="Games" title="Your games">🗂</button>
+    <button id="new-game" class="icon new" aria-label="New game" title="New game">＋</button>
+    <a id="how-link" class="icon" href="./how.html" aria-label="How to play" title="How to play">?</a>
+    <button id="sound-toggle" class="icon" aria-pressed="false" aria-label="Sound on" title="Sound">🔊</button>
+    <a id="control-link" class="icon" href="./control.html" target="whaleship-control" aria-label="Settings, ranks and help" title="Settings · ranks · help">⚙</a>
+  </nav>
+</header>
+<div class="viewport"><div class="screens" id="screens">
+
+<main class="screen screen-game" id="screen-game">
+  <section class="sea" id="sea" aria-label="Ocean">
+    <canvas id="world3d" class="world3d" tabindex="0" aria-label="3D ocean battlefield. Type a sector letter then 1–9."></canvas>
+    <pre id="inspect" class="inspect" hidden></pre>
+    <div class="foam-wrap" aria-hidden="true"><div class="foam-plane" id="foam-plane"><canvas id="foam" class="foam"></canvas></div></div>
+    <div id="life" class="life" aria-hidden="true"></div>
+    <div id="turn" class="turn" role="status" aria-live="polite"></div>
+    <div class="views" id="views" role="tablist" aria-label="Which cluster">
+      <button id="view-target" role="tab">🎯 enemy</button><button id="view-home" role="tab">⚓ mine</button>
+    </div>
+    <div class="zoom-ctl"><button id="zoom-in" aria-label="Zoom in">＋</button><button id="zoom-out" aria-label="Zoom out">−</button></div>
+    <div class="board-wrap" id="board-wrap">
+      <div class="board-label" id="board-label"></div>
+      <div class="iso"><div class="zoom" id="zoom"><div class="board-frame" id="board-frame">
+        <div class="axis axis-x" aria-hidden="true"></div>
+        <div class="axis axis-y" aria-hidden="true"></div>
+        <div class="board" id="board" tabindex="0" role="application" aria-roledescription="game board" aria-label="Board"><canvas id="plane" class="plane"></canvas><i class="probe p0"></i><i class="probe p1"></i><i class="probe p2"></i></div>
+      </div></div></div>
+    </div>
+    <canvas id="fx" class="fx" aria-hidden="true"></canvas>
+    <div id="result-overlay" class="result-overlay" hidden><div class="result-card"><p class="result-emoji" id="result-emoji">🏆</p><h2 id="result-title"></h2><pre id="result-report" class="report"></pre><p id="result-line"></p></div></div>
+  </section>
+
+  <!-- floating command bar: one prompt line + only the buttons this moment needs -->
+  <footer class="hud" id="dock">
+    <p id="hint" class="hint"></p>
+    <div class="cta-row">
+      <div class="sizes" id="sizes" hidden role="group" aria-label="Board size"><button data-size="15"><b>SECTORS</b><small>★ A–Y · salvo 3</small></button><button data-size="20"><b>20×20</b><small>salvo 4</small></button><button data-size="30"><b>30×30</b><small>armada · salvo 6</small></button></div>
+      <div class="rules" id="rules" role="group" aria-label="Game mode"><button data-rules="classic" title="Plain salvo battleship — no specials."><b>CLASSIC</b><small>just pings</small></button><button data-rules="warfare" title="Each creature powers abilities. Specials have charges and cooldowns."><b>WARFARE</b><small>★ roles + specials</small></button><button data-rules="chaos" title="Warfare plus random Kubernetes events: self-healing, CrashLoopBackOff, drains…"><b>CHAOS</b><small>+ k8s events</small></button></div>
+      <button id="cta-solo" class="big primary"><span>🚀 PLAY SOLO</span><small>$ docker run --rm ai-captain</small></button>
+      <select id="difficulty" class="big-select" aria-label="Solo difficulty"><option value="easy">🐧 easy</option><option value="normal" selected>🦭 normal</option><option value="hard">🐋 hard</option></select>
+      <button id="cta-friend" class="big secondary"><span>🤝 PLAY A FRIEND</span><small>$ docker compose up --scale captain=2</small></button>
+      <button id="cta-invite" class="big primary"><span>📨 SEND THE LINK</span><small>whoever opens it plays you</small></button>
+      <button id="cta-shuffle" class="big secondary"><span>🔀 SHUFFLE</span><small>$ docker compose up --force-recreate</small></button>
+      <button id="cta-ready" class="big primary"><span>⚓ DEPLOY!</span><small>$ docker stack deploy fleet</small></button>
+      <div id="keypad" class="keypad" role="group" aria-label="Targeting console"><p id="kp-head" class="kp-head"></p><p id="kp-cluster" class="kp-cluster"></p><div id="queue" class="queue" aria-label="Armed packets"></div><div id="kp-grid" class="kp-grid"></div></div>
+      <button id="cta-fire" class="big fire"><span id="fire-label">📡 PING</span><small id="fire-cmd">$ ping —</small></button>
+      <div id="specials" class="specials" role="group" aria-label="Specials"></div>
+      <button id="cta-notify" class="big secondary"><span>🔔 PING ME</span><small>when it's my turn</small></button>
+      <button id="cta-forfeit" class="big secondary"><span>🏳 CLAIM WIN</span><small>opponent went dark</small></button>
+      <button id="cta-again" class="big primary"><span>↻ PLAY AGAIN</span><small>$ docker compose restart</small></button>
+      <button id="cta-share" class="big secondary"><span>📣 BRAG</span><small>share the result</small></button>
+    </div>
+    <a class="signin-link hud-signin" hidden>🔐 Sign in with fridge.run — keep your games on every device</a>
+    <button id="to-terminal" class="term-tab" aria-controls="screen-term"><b>❯_</b><span id="ticker-text">terminal</span><i>terminal ›</i></button>
+  </footer>
+</main>
+
+<section class="screen screen-term" id="screen-term" aria-label="Terminal">
+  <div class="term-top"><button id="term-back" class="term-back">← Back to game</button><span>terminal · type <b>help</b></span><button id="term-watch" class="term-toggle" aria-pressed="false" title="Show the live map and container list">🗺 live map</button></div>
+  <div class="pane pane-watch"><div class="watch-head"><span>Every 1.0s: whalemap &amp;&amp; docker ps -a</span><span id="watch-clock"></span></div><div class="watch-body"><pre id="map" class="map" aria-label="Network map"></pre><pre id="pods" class="pods" aria-label="Fleet status"></pre></div></div>
+  <div class="pane pane-shell">
+    <div id="terminal-log" class="term-log" role="log" aria-live="polite" aria-relevant="additions text"></div>
+    <form id="terminal-form" class="term-form"><label for="command"><b class="pu">captain@whaleship</b>:<b class="pp">~</b>$</label><input id="command" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Game command"></form>
+  </div>
+  <div class="chips" id="chips" aria-label="Quick commands"><button data-cmd="help">help</button><button data-cmd="docker ps">docker ps</button><button data-cmd="kubectl get nodes">kubectl get nodes</button><button data-cmd="status">status</button><button data-cmd="invite">invite</button><button data-cmd="clear">clear</button></div>
+  <div class="tmux-bar"><span class="sess">[whaleship]</span><span class="wins">0:whalemap- 1:bash*</span><code id="release" class="release"></code><button id="to-game" class="tm-back">🌊 ocean</button></div>
+</section>
+
+</div></div>
+
+<dialog id="new-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>Games</h2><button class="x" aria-label="Close">×</button></form>
+  <p id="account-line" class="sheet-sub account-line"></p><a class="signin-link big friend wide-btn" hidden><span>🔐 Sign in with fridge.run</span><small>keep your games on every device</small></a>
+  <div id="recent-wrap" hidden><p class="sheet-sub">$ docker ps — your games (play several at once; no time limits)</p><div id="recent" class="recent"></div></div>
+  <div id="notify-wrap" hidden><button id="notify-enable" class="big secondary wide-btn"><span>🔔 Turn on desktop notifications</span><small>get told when it’s your move in any game</small></button></div>
+  <p class="sheet-sub">$ docker compose up — start a new game</p>
+  <div class="sizes" role="group" hidden aria-label="Board size"><button data-size="15"><b>SECTORS</b><small>★ A–Y · salvo 3</small></button><button data-size="20"><b>20×20</b><small>salvo 4</small></button><button data-size="30"><b>30×30</b><small>armada · salvo 6</small></button></div>
+  <div class="rules" role="group" aria-label="Game mode"><button data-rules="classic" title="Plain salvo battleship — no specials."><b>CLASSIC</b><small>just pings</small></button><button data-rules="warfare" title="Each creature powers abilities. Specials have charges and cooldowns."><b>WARFARE</b><small>★ roles + specials</small></button><button data-rules="chaos" title="Warfare plus random Kubernetes events: self-healing, CrashLoopBackOff, drains…"><b>CHAOS</b><small>+ k8s events</small></button></div>
+  <div class="mode-grid">
+    <button class="big primary" data-mode="easy"><span>🐧 SOLO · EASY</span><small>casual penguin</small></button>
+    <button class="big primary" data-mode="normal"><span>🦭 SOLO · NORMAL</span><small>tactical walrus</small></button>
+    <button class="big primary" data-mode="hard"><span>🐋 SOLO · HARD</span><small>probability whale</small></button>
+    <button class="big friend" data-mode="multiplayer"><span>🤝 PLAY A FRIEND</span><small>get a link · they tap it · you're playing</small></button>
+  </div>
+</dialog>
+
+<dialog id="share-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>📨 Send this to a friend</h2><button class="x" aria-label="Close">×</button></form>
+  <p class="sheet-sub">They tap it and they're in — no account, no setup.</p>
+  <input id="share-url" class="share-url" readonly aria-label="Invite link">
+  <div class="share-row"><button id="share-copy" class="big primary"><span>📋 COPY LINK</span></button><button id="share-native" class="big friend"><span>📤 SHARE…</span></button></div>
+  <div class="qr-wrap"><img id="share-qr" alt="QR code for the invite link" width="180" height="180" hidden><p class="sheet-sub">…or let them scan this</p></div>
+  <form method="dialog"><button class="big secondary wide-btn"><span>🌊 Back to the ocean</span><small>your fleet is deployed · no time limit</small></button></form>
+</dialog>
+
+<dialog id="leave-dialog" class="sheet"><h2>End this game?</h2><p id="leave-warning">Leaving an active battle counts as a forfeit. Just closing the tab is fine — your seat waits for you.</p><div class="share-row"><button id="stay" class="big secondary"><span>Stay aboard</span></button><button id="confirm-leave" class="big fire"><span>🏳 End game</span></button></div></dialog>
+<div id="toast" role="status" hidden></div><noscript><p>WHALESHIP needs JavaScript. Enable it to play.</p></noscript></body></html>
