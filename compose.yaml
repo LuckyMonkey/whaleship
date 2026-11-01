@@ -1,0 +1,25 @@
+name: whaleship2
+services:
+  api:
+    build: .
+    image: whaleship2:dev
+    container_name: whaleship2-api
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    env_file: [.env]                      # AUTH_SECRET for the Fridge identity bridge (never logged)
+    environment:
+      AUTH_BRIDGE: http://fridge-caddy:8088/__whaleship_identity
+      ALLOWED_ORIGINS: https://go.fridge.run
+    volumes:
+      - /srv/data/whaleship2:/data
+      - /srv/data/whaleship2-import:/import:ro
+    tmpfs: ["/tmp:size=8m,noexec,nosuid"]
+    networks: [edge]
+    logging: {options: {max-size: 5m, max-file: "2"}}
+networks:
+  edge: {external: true, name: fridge-homepage_default}

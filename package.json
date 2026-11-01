@@ -1,0 +1,2 @@
+{ "name": "whaleship2", "version": "0.5.0", "private": true, "main": "server.js", "license": "UNLICENSED",
+  "dependencies": { "ws": "8.18.3" }, "engines": { "node": ">=22" } }

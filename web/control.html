@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f4f1df"><title>WHALESHIP — Control room</title><link rel="stylesheet" href="./styles/game.css"><script type="module" src="./src/control.js"></script></head><body class="control">
+<header class="bar">
+  <a href="./" id="back" class="brand back" aria-label="Back to the game"><b>←</b><svg width="34" height="26" viewBox="0 0 80 60" aria-hidden="true"><path d="M7 23H60V13L76 22L67 32C64 53 20 59 9 37Z" fill="#1687b7" stroke="#17252c" stroke-width="4"/><path d="M17 10h14v15H17zm16 0h14v15H33zm16 0h10v15H49z" fill="#ffcb3b" stroke="#17252c" stroke-width="3"/><circle cx="21" cy="35" r="3"/></svg><span>WHALESHIP</span></a>
+  <p class="phase">Control room</p>
+  <nav><a href="https://fridge.run" class="icon" title="fridge.run" aria-label="fridge.run">↗</a></nav>
+</header>
+<main class="rooms">
+  <section class="card">
+    <div class="section-title"><span>01 / CAPTAIN</span><span>⚓</span></div>
+    <label for="captain-name">YOUR CALLSIGN</label>
+    <input id="captain-name" maxlength="28" placeholder="Captain Kernel" autocomplete="nickname">
+    <p id="identity-note" class="small">Guests welcome. No account required.</p>
+    <form id="join-form"><label for="invite-input">GOT AN INVITATION?</label><div class="join-row"><input id="invite-input" placeholder="Paste invitation link" autocomplete="off"><button type="submit" aria-label="Join invitation">Join →</button></div></form>
+  </section>
+
+  <section class="card" id="settings">
+    <div class="section-title"><span>02 / SOUND &amp; DISPLAY</span><span>⚙</span></div>
+    <label>Master volume <input type="range" id="master-volume" min="0" max="100"></label>
+    <label>Sound effects <input type="range" id="effects-volume" min="0" max="100"></label>
+    <label>Ambient ocean <input type="range" id="ambient-volume" min="0" max="100"></label>
+    <label>Music <input type="range" id="music-volume" min="0" max="100"></label>
+    <label><input type="checkbox" id="fast-animation"> Fast animations</label>
+    <label><input type="checkbox" id="reduced-motion"> Reduced motion &amp; particles</label>
+    <label><input type="checkbox" id="high-contrast"> High contrast</label>
+    <label><input type="checkbox" id="manual"> Place my own ships (instead of auto-deploy)</label>
+    <label><input type="checkbox" id="confirm"> Confirm each shot with FIRE (instead of tap-to-fire)</label>
+    <label>Text size <select id="font-size"><option value="100">Standard</option><option value="115">Large</option><option value="130">Larger</option></select></label>
+    <p class="small">Changes apply to an open game tab immediately. Turn sound on with ♫ in the game. Camera shake is off.</p>
+  </section>
+
+  <section class="card wide-card" id="ranks">
+    <div class="section-title"><span>03 / ADMIRALTY RECORDS</span><span>🏆</span></div>
+    <div class="button-row"><select id="rank-mode" aria-label="Leaderboard mode"><option value="multiplayer">Multiplayer</option><option value="easy">Solo / Easy</option><option value="normal">Solo / Normal</option><option value="hard">Solo / Hard</option></select><select id="rank-period" aria-label="Leaderboard period"><option value="all">All time</option><option value="week">Last 7 days</option></select></div>
+    <div class="rank-scroll"><table><thead><tr><th>#</th><th>Captain</th><th>Games</th><th>Wins</th><th>Losses</th><th>Forfeit wins</th><th>Win %</th><th>Accuracy</th><th>Sunk</th><th>Streak</th><th>Best</th></tr></thead><tbody id="rank-body"></tbody></table></div>
+    <p id="rank-empty">Loading records…</p>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><span>04 / HARBOR STATUS</span><span class="light" id="service-light"></span></div>
+    <p id="infra-status">Contacting harbor…</p>
+    <p id="deployments" class="small">— active deployments</p>
+    <p class="small">Matches are saved to disk — no time limits. PACKET LOSS: PERSONAL.</p>
+  </section>
+
+  <section class="card">
+    <div class="section-title"><span>05 / FIELD MANUAL</span><span>📖</span></div>
+    <p>Deploy 5 ships. Take turns firing at coordinates. Hits still use your turn. Sink all 17 segments to win. No time limits: close the tab, come back to your link anytime.</p>
+    <dl class="keys"><dt>Tap the ocean</dt><dd>start a solo game · move a ship · fire</dd><dt><kbd>R</kbd></dt><dd>rotate ship while deploying</dd><dt>Drag a ship</dt><dd>move it while deploying (tap it to rotate)</dd><dt>Arrows + Enter</dt><dd>keyboard play on the board</dd><dt><kbd>V</kbd></dt><dd>swap between enemy waters and your fleet</dd><dt><kbd>`</kbd> or swipe the dock</dt><dd>terminal — try <code>help</code>, <code>fire E4</code>, <code>kubectl get pods</code></dd></dl>
+    <div class="field-note"><b>FIELD NOTE / 001</b><p>A ping is an ICMP echo request.<br>Here, it is also a very bad day for a container.</p><span>— Admiral WAL-RUS</span></div>
+  </section>
+</main>
+<footer class="rooms-foot"><span>WHALESHIP / v0.6</span><span>ENTERPRISE-GRADE OVERKILL. BOARD-GAME-SIZED PROBLEMS.</span><a href="https://fridge.run">BACK TO THE FRIDGE ↗</a></footer>
+<div id="toast" role="status" hidden></div>
+</body></html>
