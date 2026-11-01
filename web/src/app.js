@@ -493,6 +493,7 @@ function render3D(shots) {
     (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${cell}`, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
   }
   R3.syncCreatures(items);
+  const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells);
 }
 function renderShips(shots) {
   if (R3) return render3D(shots);

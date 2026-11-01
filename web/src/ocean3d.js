@@ -273,8 +273,12 @@ function buildBuoy() {
 }
 
 let flameTex = null;
-function getFlameTex() { if (flameTex) return flameTex; const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), r = g.createRadialGradient(32, 36, 0, 32, 36, 30);
-  r.addColorStop(0, '#fff3b0ff'); r.addColorStop(.22, '#ffb627f5'); r.addColorStop(.5, '#ff5a1fd0'); r.addColorStop(.8, '#d6281a60'); r.addColorStop(1, '#a0181000'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); flameTex = new THREE.CanvasTexture(c); return flameTex; }
+function getFlameTex() {   // a teardrop flame: white-hot core, yellow → orange → red edge, soft tip
+  if (flameTex) return flameTex; const c = document.createElement('canvas'); c.width = 64; c.height = 128; const g = c.getContext('2d');
+  const shape = (scale, color) => { g.save(); g.translate(32, 124); g.scale(scale, scale); g.beginPath(); g.moveTo(0, 0); g.bezierCurveTo(-30, -4, -30, -46, -10, -70); g.bezierCurveTo(-4, -82, -6, -100, 0, -120); g.bezierCurveTo(6, -100, 4, -82, 10, -70); g.bezierCurveTo(30, -46, 30, -4, 0, 0); g.fillStyle = color; g.fill(); g.restore(); };
+  g.filter = 'blur(3px)'; shape(1, '#d6281acc'); g.filter = 'blur(2px)'; shape(.82, '#ff6a1fe6'); shape(.62, '#ffb627f2'); g.filter = 'blur(1.5px)'; shape(.4, '#fff3b0ff');
+  flameTex = new THREE.CanvasTexture(c); return flameTex;
+}
 /* ---------------- vessels: Kubernetes carrier + Linux icebreaker (scenery, never part of game state) ---------------- */
 function hullGeo(len, beam, depth) {   // top-view outline with a pointed bow, extruded upward
   const sh = new THREE.Shape(); sh.moveTo(-len / 2, -beam / 2); sh.lineTo(len * .28, -beam / 2); sh.quadraticCurveTo(len * .48, -beam * .35, len / 2, 0); sh.quadraticCurveTo(len * .48, beam * .35, len * .28, beam / 2); sh.lineTo(-len / 2, beam / 2); sh.lineTo(-len / 2, -beam / 2);
@@ -366,7 +370,21 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     b.pts.geometry.attributes.position.needsUpdate = true; }
   const fireballs = Array.from({length: 6}, () => { const s = new THREE.Sprite(new THREE.SpriteMaterial({map: getFlameTex(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false})); s.visible = false; s.renderOrder = 5; scene.add(s); return {s, t: 1, big: false}; });
   const sweepGeo = new THREE.CircleGeometry(1.7, 24, 0, .8).rotateX(-Math.PI / 2), sweeps = Array.from({length: 2}, () => { const m = new THREE.Mesh(sweepGeo, new THREE.MeshBasicMaterial({color: '#23e4d0', transparent: true, opacity: .45, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false})); m.visible = false; m.renderOrder = 4; scene.add(m); return {m, t: 1}; });
+  // burning hit marks: pooled flame sprites on every hit square, embers on sunk ones, one shared smoke system
+  const FIRE_MAX = 64, fires = Array.from({length: FIRE_MAX}, () => { const s = new THREE.Sprite(new THREE.SpriteMaterial({map: getFlameTex(), depthWrite: false, transparent: true, toneMapped: false, fog: false}));
+    s.center.set(.5, .04); s.visible = false; s.renderOrder = 4; scene.add(s); return {s, ph: Math.random() * 6, big: true}; });
+  const SMK = 90, smkPos = new Float32Array(SMK * 3), smkV = Array.from({length: SMK}, () => ({v: new THREE.Vector3(), life: 1 + Math.random()})), smkG = new THREE.BufferGeometry(); smkG.setAttribute('position', new THREE.BufferAttribute(smkPos, 3));
+  const smoke = new THREE.Points(smkG, new THREE.PointsMaterial({color: '#3b444c', size: .3, transparent: true, opacity: .4, depthWrite: false, fog: false})); smoke.visible = false; smoke.frustumCulled = false; scene.add(smoke);
+  let fireSpots = [];
+  function fireTick(dt) {
+    if (!fireSpots.length) return;
+    for (let i = 0; i < fires.length; i++) { const f = fires[i]; if (!f.s.visible) continue; const k = (f.big ? .95 : .75) * (.8 + .25 * Math.sin(time * 11 + f.ph) * Math.sin(time * 6.3 + f.ph * 2)); f.s.scale.set(k * .55, k * (1.05 + .12 * Math.sin(time * 15 + f.ph)), 1); f.s.material.opacity = (f.big ? .9 : .82) + .1 * Math.sin(time * 8 + f.ph); }
+    for (let i = 0; i < SMK; i++) { const s = smkV[i]; s.life += dt * .55; if (s.life >= 1) { const p = fireSpots[Math.floor(Math.random() * fireSpots.length)]; s.life = Math.random() * .25; smkPos[i * 3] = p.x + (Math.random() - .5) * .3; smkPos[i * 3 + 1] = .35; smkPos[i * 3 + 2] = p.z + (Math.random() - .5) * .3; s.v.set((Math.random() - .5) * .12 + .08, .5 + Math.random() * .35, (Math.random() - .5) * .12 - .05); }
+      smkPos[i * 3] += s.v.x * dt; smkPos[i * 3 + 1] += s.v.y * dt; smkPos[i * 3 + 2] += s.v.z * dt; }
+    smkG.attributes.position.needsUpdate = true;
+  }
   function fxTick(dt) {
+    fireTick(dt);
     for (const f of fireballs) if (f.t < 1) { f.t += dt / (f.big ? 1 : .7); const e = 1 - (1 - Math.min(1, f.t)) ** 2, k = (f.big ? 2.6 : 1.6) * (.3 + e); f.s.scale.set(k, k * 1.1, 1); f.s.position.y = .45 + e * .5; f.s.material.opacity = Math.max(0, 1 - f.t * 1.1); if (f.t >= 1) f.s.visible = false; }
     for (const w of sweeps) if (w.t < 1) { w.t += dt / 1.2; w.m.rotation.y = -w.t * Math.PI * 2.4; w.m.material.opacity = .5 * (1 - w.t); if (w.t >= 1) w.m.visible = false; }
     for (const r of rings) if (r.t < 1) { r.t += dt / r.dur; if (r.t < 0) continue; r.m.visible = r.t < 1; const e = 1 - (1 - r.t) ** 3; r.m.scale.setScalar(.3 + r.s * e); r.m.material.opacity = (1 - r.t) * .85; }
@@ -466,7 +484,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
           c.position.set((a.x + b.x) / 2, 0, (a.z + b.z) / 2); c.rotation.y = it.vertical ? -Math.PI / 2 : 0; scene.add(c); creatures.set(it.key, c); c.userData.seen = false;
         }
         c.visible = true;
-        for (const j of it.hits || []) { c.userData.knockOff(j, c.userData.seen); if (!it.sunk) c.userData.burn?.(j); }
+        for (const j of it.hits || []) c.userData.knockOff(j, c.userData.seen);
         if (it.sunk) c.userData.sinkNow(!!it.fresh && c.userData.seen);
         c.userData.seen = true;
       }
@@ -503,6 +521,13 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     // packet flood: red packets pour in from the horizon onto every cell of the diamond
     floodFx(cell, area) { const c = cellCenter(cell % N, Math.floor(cell / N)), list = area.slice(0, 8);
       return Promise.all(list.map((a, i) => new Promise(res => setTimeout(() => { const src = Math.max(0, Math.min(N * HT - 1, (i % 2 ? 0 : N - 1) + Math.floor(Math.random() * HT) * N)); api.launch(src, a, {color: '#ff5a2e', dur: .9}).then(() => { const q = cellCenter(a % N, Math.floor(a / N)); ring(q.x, q.z, '#ff8a5c', 0, 2.2, .7); res(); }); }, i * 70)))); },
+    // hit: squares currently burning (hit, not yet sunk) · sunk: smouldering wreck squares
+    setFires(hit, sunk) {
+      const spots = [...hit.map(c => ({c, big: true})), ...sunk.map(c => ({c, big: false}))].slice(0, FIRE_MAX);   // wrecks keep burning
+      fireSpots = spots.map(({c}) => cellCenter(c % N, Math.floor(c / N)));
+      fires.forEach((f, i) => { const sp = spots[i]; if (!sp) { f.s.visible = false; return; } const p = fireSpots[i]; f.s.position.set(p.x + (f.ph % 1 - .5) * .15, .12, p.z); f.big = sp.big; f.s.visible = true; });
+      smoke.visible = fireSpots.length > 0;
+    },
     clearCreatures() { for (const c of creatures.values()) scene.remove(c); creatures.clear(); },
     canvas, stop, start,
   };
