@@ -36,7 +36,7 @@ Or with Docker:
 docker compose up -d --build   # → http://localhost:8080/whaleship/   (data in ./data)
 ```
 
-Run the tests with `node --test test/`. They start a throwaway server on a random port.
+Run the tests with `node --test test/*.test.mjs`. They start a throwaway server on a random port.
 
 ## Configuration
 
