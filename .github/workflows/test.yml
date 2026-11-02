@@ -4,9 +4,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: {node-version: 22}
       - run: npm ci --omit=dev
       - run: node --check server.js && node --check web/src/app.js
-      - run: node --test test/
+      - run: node --test test/*.test.mjs
