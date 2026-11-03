@@ -655,6 +655,30 @@ const TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpe
 function json(res, code, obj, headers = {}) { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); }
 // BUILD is stamped into web/BUILD at deploy; asset URLs carry ?v=BUILD so caches (browser + Cloudflare) can never mix versions
 const BUILD = (() => { try { return fs.readFileSync(path.join(WEB, 'BUILD'), 'utf8').trim(); } catch { return 'dev'; } })();
+/* ---------------- per-invite link previews (Open Graph) ----------------
+   Invite links are BASE/?j=<short id>. Link-preview crawlers fetch the page without running JS, so the server
+   swaps the generic <!--og--> block in index.html for one describing that match: who is challenging, board, mode,
+   and a banner for that board × mode (web/img/invite/<quick|full>-<rules>.jpg). Nothing secret is exposed:
+   only captain names, board, mode, phase and turn count — what the joiner sees in-game anyway. */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const RULE_COPY = { classic: ['🎯 Classic', 'Pure salvo battleship — just aim well'], warfare: ['🐋 Warfare', 'Whales that tail-slap, squids that spoof DNS'], chaos: ['🔥 Chaos', 'Battleship, plus Kubernetes having a very bad day'] };
+let indexHtml = null;
+function invitePage(req, j) {
+  indexHtml ??= fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
+  if (!/^[A-Za-z0-9_-]{16,44}$/.test(j)) return indexHtml;
+  const m = matches.get(Buffer.from(j, 'base64url').toString('hex'));
+  if (!m || m.mode !== 'multiplayer') return indexHtml;
+  const origin = ORIGINS[0] || `https://${req.headers.host}`, board = m.size === 9 ? 'quick' : 'full', rules = RULE_COPY[m.rules] ? m.rules : 'warfare';
+  const [ruleLabel, ruleTag] = RULE_COPY[rules], boardLabel = board === 'quick' ? '⚡ Quick (9 sectors, ~5 min)' : '🌊 Full (36 sectors)';
+  const [a, b] = m.seats.map(st => st?.name || null);
+  let title, desc;
+  if (m.phase === 'finished') { const w = m.seats[m.winner]?.name, l = m.seats[1 - m.winner]?.name; title = `🏆 ${w} won a WHALESHIP battle`; desc = `${w} beat ${l} in ${m.turn_number} turns · ${boardLabel} · ${ruleLabel}. Start your own battle — no account, no install.`; }
+  else if (a && b) { title = `⚔️ ${a} vs ${b} — WHALESHIP`; desc = `Battle underway${m.turn_number ? ` · turn ${m.turn_number}` : ''} · ${boardLabel} · ${ruleLabel}. If this is your game, tap to jump back in.`; }
+  else { title = `⚓ ${a || 'A captain'} challenges you to WHALESHIP`; desc = `${boardLabel} · ${ruleLabel}: ${ruleTag}. Tap to take the empty seat — no account, no install.`; }
+  const img = `${origin}${BASE}/img/invite/${board}-${rules}.jpg${BUILD !== 'dev' ? '?v=' + BUILD : ''}`, url = `${origin}${BASE}/?j=${j}`;
+  const og = `<meta property="og:type" content="website"><meta property="og:site_name" content="WHALESHIP"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:image" content="${esc(img)}"><meta property="og:image:type" content="image/jpeg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="WHALESHIP invite: ${esc(boardLabel)} · ${esc(ruleLabel)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}"><meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(img)}">`;
+  return indexHtml.replace(/<!--og-->[\s\S]*?<!--\/og-->/, `<!--og-->${og}<!--/og-->`);
+}
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -666,6 +690,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/metrics') { const active = [...matches.values()].filter(m => m.phase !== 'finished').length; return json(res, 200, { status: 'operational', infrastructure: { active_workers: active, max_workers: MAX_ACTIVE, backend: 'whaleship2', restarts: 0 } }); }
     if (p === '/api/leaderboard') return json(res, 200, leaderboard(['multiplayer', 'easy', 'normal', 'hard'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'multiplayer', url.searchParams.get('period')));
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if ((p === '/' || p === '/index.html') && url.searchParams.has('j')) { const body = invitePage(req, url.searchParams.get('j')); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, max-age=0', 'Content-Length': Buffer.byteLength(body) }); return res.end(req.method === 'HEAD' ? undefined : body); }
     const rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
     const file = path.resolve(WEB, rel);
     if (!file.startsWith(WEB + path.sep)) { res.writeHead(403); return res.end(); }

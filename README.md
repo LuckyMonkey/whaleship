@@ -11,6 +11,7 @@
 - **Asynchronous**: no time limits, games persist across restarts, play several at once, and get **push notifications** (Web Push, even with the game closed) when it's your move.
 - **Sign in once, play anywhere** (optional single sign-on): your games follow your account to your phone. Installable to the home screen.
 - **Two boards**: **⚡ Quick** — 9 sectors (`A`–`I`), 5 vessels, about five minutes — or **🌊 Full** — 36 sectors (`A`–`Z`, `0`–`9`), 10 vessels. Every sector is a 3×3 keypad: type `E5 B3 ⏎` on a keyboard, or just tap the map on a phone.
+- **Invite links that sell themselves**: every invite unfurls in Discord, iMessage, Slack, X… with who's challenging you, the board and mode, and a banner for that board × mode (`web/img/invite/`).
 - **Fast endgames**: losing vessels costs at most one ping, and when your opponent is down to their last two vessels you get a +1 mop-up ping.
 - **Updates never break a game in progress**: saved matches carry a schema version and keep the rules they started with; every deploy dry-runs the new build against the saved games first ([docs/UPDATING.md](docs/UPDATING.md)).
 - **Infrastructure roles**: each vessel powers abilities. Sink their Docker host and they lose Tail Slap; sink their proxy and your scans stop being masked.

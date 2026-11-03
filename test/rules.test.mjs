@@ -246,3 +246,21 @@ test('state transfer: a game in progress survives a server update + schema migra
   assert.equal(readFileSync(fut, 'utf8'), futBody, 'newer-schema file untouched');
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('invite links render a per-match link preview (Open Graph) without leaking anything', async () => {
+  const og = async j => { const html = await (await fetch(`http://127.0.0.1:${PORT}/whaleship/?j=${j}`)).text(); const g = k => (html.match(new RegExp(`property="og:${k}" content="([^"]*)"`)) || [])[1]; return { title: g('title'), desc: g('description'), image: g('image'), html }; };
+  const host = client(); await host.open;
+  const created = await host.send({ type: 'CREATE_MATCH', mode: 'multiplayer', size: 9, rules: 'chaos', name: 'Salty "Q" & co' });
+  const j = Buffer.from(created.state.id, 'hex').toString('base64url');
+  let p = await og(j);
+  assert.match(p.title, /challenges you to WHALESHIP/); assert.match(p.title, /Salty &quot;Q&quot; &amp; co/, 'names are HTML-escaped');
+  assert.match(p.desc, /Quick/); assert.match(p.desc, /Chaos/); assert.match(p.image, /\/whaleship\/img\/invite\/quick-chaos\.jpg/);
+  assert.ok(!p.html.includes(created.credential), 'no seat credential in the page');
+  assert.equal(p.html.match(/property="og:title"/g).length, 1, 'generic block replaced, not duplicated');
+  const guest = client(); await guest.open; await guest.send({ type: 'JOIN_MATCH', session: created.state.id, name: 'Kelp-7' });
+  p = await og(j); assert.match(p.title, /vs/); assert.match(p.image, /quick-chaos/);
+  assert.match((await og('nope')).title, /Sink their stack/, 'unknown invite → generic card');
+  assert.match((await og(Buffer.from('0'.repeat(32), 'hex').toString('base64url'))).title, /Sink their stack/);
+  const img = await fetch(`http://127.0.0.1:${PORT}/whaleship/img/invite/full-warfare.jpg`); assert.equal(img.headers.get('content-type'), 'image/jpeg');
+  host.close(); guest.close();
+});
