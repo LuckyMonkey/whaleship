@@ -73,7 +73,7 @@ const ROLE = id => ROLES[F(id).kind % 5];
 const NICE = id => `${ROLE(id).kind} (${POD(id)} · ${ROLE(id).role})`;
 const TOTAL = () => FLEET.reduce((n, f) => n + f.len, 0);
 const colLabel = i => i < 26 ? String.fromCharCode(65 + i) : 'A' + String.fromCharCode(39 + i);
-const CELLS = () => N * HT, SECT = () => [15, 18, 36].includes(SIZE), dims = s => s === 18 ? [18, 12] : s === 36 ? [18, 18] : [s, s];
+const CELLS = () => N * HT, SECT = () => [9, 15, 18, 36].includes(SIZE), dims = s => s === 18 ? [18, 12] : s === 36 ? [18, 18] : [s, s];
 const SC = () => N / 3, SR = () => HT / 3, NSEC = () => SC() * SR();   // sector columns / rows / count
 // Sector addressing: 6×4 sectors A–X, each a 3×3 keypad 1–9. K5 = centre of sector K. Sectors are addresses, not walls.
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';   // sectors A–Z then 0–9 (6×6 = 36); subsectors stay 1–9
@@ -90,7 +90,7 @@ function parseCoord(v) {
   const L = m[1].toUpperCase(), x = L.length === 1 ? L.charCodeAt(0) - 65 : 26 + L.charCodeAt(1) - 65, y = Number(m[2]) - 1;
   return x >= 0 && x < N && y >= 0 && y < HT ? y * N + x : -1;
 }
-const prefSize = () => 36;   // the 6×6 sector map is the only play mode (older matches still load in their own size)
+const prefSize = () => { try { return localStorage.getItem('whaleship:size9') === '9' ? 9 : 36; } catch { return 36; } };   // QUICK 3×3 sectors (A–I) or FULL 6×6 (A–Z, 0–9); older matches still load in their own size
 let chosenSize = prefSize();
 const coarse = () => matchMedia('(pointer:coarse)').matches;
 const touchLayout = () => coarse() || innerWidth < 700;   // phones/tablets: tap the map; no sector keypad
@@ -135,7 +135,7 @@ function raw(v) { if (!connected || socket?.readyState !== 1) { toast('Reconnect
 function act(type, data = {}) { if (!state || pending) return; pending = true; raw({type, session: state.id, revision: state.revision, action_id: crypto.randomUUID(), ...data}); setTimeout(() => pending = false, 3000); }
 function newGame(mode, size = chosenSize) {
   if (pending) return; pending = true; justCreated = mode === 'multiplayer';
-  prompt(`docker compose --profile ${chosenRules} up -d --scale grid=${dims(size).join('x')}${mode === 'multiplayer' ? ' --wait-for friend' : ' --ai ' + mode}`); audio.sound('select');
+  prompt(`docker compose --profile ${chosenRules} up -d --scale grid=${dims(size).join('x')}${size === 9 ? ' --quick' : ''}${mode === 'multiplayer' ? ' --wait-for friend' : ' --ai ' + mode}`); audio.sound('select');
   raw({type: 'CREATE_MATCH', mode, size, rules: chosenRules, name: myName()}); setTimeout(() => pending = false, 10000);
 }
 const toShort = hex => btoa(String.fromCharCode(...hex.match(/../g).map(h => parseInt(h, 16)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -757,7 +757,7 @@ function fireVolley() {
 }
 
 /* ---------------- zoom + pan: starts with ~80% of the board on screen; drag to look around ---------------- */
-const baseZoom = () => SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
+const baseZoom = () => SIZE === 9 ? (touchLayout() ? 1.3 : 1.05) : SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
 let planeResize = 0;
 function applyZoom(glide = false) {
   const w = $('#zoom'); if (!w) return;
@@ -1070,7 +1070,7 @@ function renderHud() {
   for (const [id, v] of [['#view-target', 'target'], ['#view-home', 'home']]) { $(id).setAttribute('aria-selected', String(view === v)); $(id).disabled = animating; }
   const canNotify = 'Notification' in window && Notification.permission === 'default';
   let hint = '', ids = [], pulse = null;
-  if (!state) { hint = `sink their infrastructure · 36 sectors · type Q5 or 35 · ${RULE_INFO[chosenRules].label.toLowerCase()}`; ids = ['rules', 'cta-solo', 'difficulty', 'cta-friend']; pulse = 'cta-solo'; paintSizes(); }
+  if (!state) { hint = chosenSize === 9 ? `quick game · 9 sectors A–I · type E5 · ${RULE_INFO[chosenRules].label.toLowerCase()}` : `sink their infrastructure · 36 sectors · type Q5 or 35 · ${RULE_INFO[chosenRules].label.toLowerCase()}`; ids = ['sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend']; pulse = 'cta-solo'; paintSizes(); }
   else if (deploying()) {
     const waitingFriend = state.mode === 'multiplayer' && !state.opponent;
     if (!state.me.ready) { hint = held != null ? `tap water to move ${NICE(held)} · tap it again to rotate` : 'drag a creature to move it · tap one, then tap water'; ids = ['cta-shuffle', 'cta-ready', ...(waitingFriend ? ['cta-invite'] : [])]; pulse = state.me.ships.length === FLEET.length ? 'cta-ready' : null; }
@@ -1085,7 +1085,7 @@ function renderHud() {
       else hint = salvo() > 1 ? (targets.size ? `🎯 ${need} more — or PING now` : `🎯 tap ${salvo()} squares in enemy waters`) : '🎯 tap a square in enemy waters to ping it';
       ids = [...(SECT() && !touchLayout() ? ['keypad'] : []), ...(targets.size || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
       if (SECT() && !armed && touchLayout()) hint = need <= 0 ? '📡 queue full — tap TRANSMIT' : `👆 tap ${need} square${need === 1 ? '' : 's'} on the enemy map · pinch to zoom`;
-      else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like J5 · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${LETTERS[sel]} → now 1–9`;
+      else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like ${SIZE === 9 ? "E5" : "J5"} · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${LETTERS[sel]} → now 1–9`;
       pulse = targets.size && (need <= 0 || settings.confirm) ? 'cta-fire' : null;
       $('#cta-fire').disabled = !targets.size;
     } else { hint = state.mode === 'multiplayer' ? `${oppName()} is aiming · no time limit — come back anytime` : '🤖 the AI is aiming…'; if (canNotify && state.mode === 'multiplayer') ids = ['cta-notify']; }
@@ -1316,7 +1316,7 @@ function command(line) {
   }
   if (cmd === 'target' || cmd === 'cd') { const L = (parts[1] || '').toUpperCase(); if (!SECT()) return log('target: only on the sector map (new 15)', 'error'); if (!(L.length === 1 && LETTERS.indexOf(L) >= 0 && LETTERS.indexOf(L) < NSEC())) return log(`usage: target K   (sectors A–${LETTERS[NSEC() - 1]})`, 'error'); selectSector(LETTERS.indexOf(L)); const si = LETTERS.indexOf(L), open = [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(k => !(state?.opponent?.shots[cellOf(si, k)])).length; log(`ENTERING SECTOR ${L} · ${subnet(si)}\n${open} ADDRESSES AVAILABLE`, 'event'); return; }
   if (cmd === 'fire' && SECT() && /^[1-9]$/.test(parts[1] || '')) { if (sel < 0) return log('fire: no sector selected (try: target K)', 'error'); if (!myTurn()) return log('Error response from daemon: not your turn', 'error'); log(`TARGET RESOLVED: ${LETTERS[sel]}${parts[1]} (${ip(cellOf(sel, Number(parts[1])), true)}) · DEPLOYING PACKET…`, 'hit'); keypad(Number(parts[1])); return; }
-  if (cmd === 'help') return log('Usage:  <command> [args]      (coordinates like e4 · nothing here touches a real host)\n\n  ping E4 [F5 …]          fire your salvo          (also: docker kill)\n  nmap K5 · traceroute K5 · hping3 K5 · oom K5      specials (warfare/chaos)\n  dnsmasq K5 · restic K5  decoy / repair in YOUR waters (free actions)\n  target K · fire 5       sector map: pick sector K, fire at K5\n  nmap E4                 PORT SCAN a 3×3 block    (reveals, no damage)\n  hping3 E4               SYN FLOOD a 3×3 block    (damage)\n  traceroute E4 [v]       TRACEROUTE a line of 5   (damage; v = column)\n  docker ps · map [mine]  fleet table · ASCII network map\n  new [easy|normal|hard|friend] [10|20|30]\n  invite · shuffle · ready · status · whoami · history · clear · fullscreen · exit');
+  if (cmd === 'help') return log('Usage:  <command> [args]      (coordinates like e4 · nothing here touches a real host)\n\n  ping E4 [F5 …]          fire your salvo          (also: docker kill)\n  nmap K5 · traceroute K5 · hping3 K5 · oom K5      specials (warfare/chaos)\n  dnsmasq K5 · restic K5  decoy / repair in YOUR waters (free actions)\n  target K · fire 5       sector map: pick sector K, fire at K5\n  nmap E4                 PORT SCAN a 3×3 block    (reveals, no damage)\n  hping3 E4               SYN FLOOD a 3×3 block    (damage)\n  traceroute E4 [v]       TRACEROUTE a line of 5   (damage; v = column)\n  docker ps · map [mine]  fleet table · ASCII network map\n  new [easy|normal|hard|friend] [quick|full] [classic|warfare|chaos]\n  invite · shuffle · ready · status · whoami · history · clear · fullscreen · exit');
   if (line.startsWith('docker ps') || cmd === 'fleet') return log(podsText());
   if (line.startsWith('kubectl get pods') || line.startsWith('docker service ps')) return log(podsText('k8s'));
   if (line.startsWith('kubectl get nodes') || line === 'kubectl get no') { if (!state) return log('No resources found in default namespace.'); const home = shotsFor('home');
@@ -1329,7 +1329,7 @@ function command(line) {
   if (cmd === 'exit') return state ? $('#leave-dialog').showModal() : openTerminal(false);
   if (cmd === 'fullscreen') return fullscreen();
   if (cmd === 'invite') { if (state?.mode === 'multiplayer') { log(inviteUrl(state.id)); copy(inviteUrl(state.id), 'Invite link copied!'); } else log('invite: no multiplayer match running (try: new friend)', 'error'); return; }
-  if (cmd === 'new') { const rw = parts.find(p => RULE_INFO[p]); if (rw) { chosenRules = rw; try { localStorage.setItem('whaleship:rules', rw); } catch {} } const word = parts.slice(1).find(p => isNaN(Number(p)) && !RULE_INFO[p]) || 'solo', m = {solo: 'normal', easy: 'easy', normal: 'normal', hard: 'hard', friend: 'multiplayer'}[word], sz = 36; if (!m) return log('usage: new [easy|normal|hard|friend] [classic|warfare|chaos]', 'error'); openTerminal(false); return newGame(m, sz); }
+  if (cmd === 'new') { const rw = parts.find(p => RULE_INFO[p]); if (rw) { chosenRules = rw; try { localStorage.setItem('whaleship:rules', rw); } catch {} } const word = parts.slice(1).find(p => isNaN(Number(p)) && !RULE_INFO[p]) || 'solo', m = {solo: 'normal', easy: 'easy', normal: 'normal', hard: 'hard', friend: 'multiplayer'}[parts.slice(1).find(p => isNaN(Number(p)) && !RULE_INFO[p] && !['quick', 'full'].includes(p)) || 'solo'], sz = parts.includes('quick') ? 9 : parts.includes('full') ? 36 : chosenSize; if (!m) return log('usage: new [easy|normal|hard|friend] [quick|full] [classic|warfare|chaos]', 'error'); openTerminal(false); return newGame(m, sz); }
   const eggs = {sudo: 'captain is not in the sudoers file. This incident will be reported.', uname: 'WhaleOS krill-6.8 x86_64 extremely-buoyant', fortune: 'A watched container never boils. Unless it is on fire.', 'docker whale': 'Whale is healthy. Emotionally, we cannot comment.', 'helm list': 'NAME   CHART              STATUS\nfleet  whaleship-0.7.0    deployed', 'kubectl get nodes': 'NAME     STATUS     ROLES\nmoby     Ready      docker-host\nwalrus   Ready      storage\ntux      NotReady   coffee-break', 'rm -rf /': 'nice try. the whales are read-only.', ls: 'Dockerfile  compose.yaml  krill/  definitely-not-secrets.env', top: 'PID  USER     %CPU COMMAND\n  1  moby     99.9 swim\n 42  tux       0.1 coffee'};
   log(eggs[line] || eggs[cmd] || `bash: ${cmd}: command not found`, eggs[line] || eggs[cmd] ? '' : 'error');
 }
@@ -1344,7 +1344,7 @@ addEventListener('pointerdown', unlock, {capture: true}); addEventListener('keyd
 /* ---------------- wiring ---------------- */
 async function copy(text, msg = 'Copied!') { try { await navigator.clipboard.writeText(text); toast(msg); audio.sound('copy'); } catch { toast('Copy this: ' + text); } }
 async function share(url, text) { if (navigator.share && coarse()) { try { await navigator.share({title: 'WHALESHIP', text, url}); return; } catch (e) { if (e.name === 'AbortError') return; } } copy(`${text} ${url}`, 'Copied — paste it anywhere!'); }
-function pickSize(n) { chosenSize = n; try { localStorage.setItem('whaleship:size8', String(n)); } catch {} if (!state) { setSize(n); autoZoom(); } paintSizes(); render(); }
+function pickSize(n) { chosenSize = n; try { localStorage.setItem('whaleship:size9', String(n)); } catch {} if (!state) { setSize(n); autoZoom(); } paintSizes(); render(); }
 document.querySelectorAll('[data-size]').forEach(b => b.onclick = () => pickSize(Number(b.dataset.size)));
 $('#cta-solo').onclick = () => newGame($('#difficulty').value);
 $('#cta-friend').onclick = () => { maybeAskNotify(); newGame('multiplayer'); };
@@ -1362,7 +1362,7 @@ $('#cta-fire').onclick = () => fireVolley();
 document.querySelectorAll('[data-rules]').forEach(b => b.onclick = () => { chosenRules = b.dataset.rules; try { localStorage.setItem('whaleship:rules', chosenRules); } catch {} audio.sound('select'); toast(`${RULE_INFO[chosenRules].label}: ${{classic: 'plain salvo battleship — no specials.', warfare: 'each creature powers abilities; specials have charges + cooldowns.', chaos: 'warfare plus random Kubernetes events (self-healing, CrashLoopBackOff, drains…).'}[chosenRules]}`); render(); });
 $('#cta-forfeit').onclick = () => act('CLAIM_FORFEIT');
 $('#cta-again').onclick = () => { $('#result-overlay').hidden = true; newGame(state?.mode || 'multiplayer', state?.size || chosenSize); };
-$('#cta-share').onclick = () => { const won = state?.winner === state?.seat, mine = state?.attacks.filter(a => a.seat === state.seat && !a.reveal) || []; share(gameUrl(), `WHALESHIP ${SECT() ? 'sector map' : N + '×' + HT} incident report: ${won ? 'enemy cluster CATASTROPHIC FAILURE 🏆' : 'it works on my machine 💀'} · ${state?.turn_number} turns · ${mine.length} packets · ${mine.filter(a => a.hit).length} hits.`); };
+$('#cta-share').onclick = () => { const won = state?.winner === state?.seat, mine = state?.attacks.filter(a => a.seat === state.seat && !a.reveal) || []; share(gameUrl(), `WHALESHIP ${SIZE === 9 ? 'quick game' : SECT() ? 'sector map' : N + '×' + HT} incident report: ${won ? 'enemy cluster CATASTROPHIC FAILURE 🏆' : 'it works on my machine 💀'} · ${state?.turn_number} turns · ${mine.length} packets · ${mine.filter(a => a.hit).length} hits.`); };
 $('#cta-notify').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 We’ll ping you when it’s your move (keep this tab open in the background).' : 'Notifications are off — the tab title still shows 🟢 on your turn.'); } catch {} render(); };
 $('#view-target').onclick = () => slideTo('target'); $('#view-home').onclick = () => slideTo('home');
 $('#result-overlay').onclick = () => $('#result-overlay').hidden = true;

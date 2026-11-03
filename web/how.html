@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050d16">
 <meta name="description" content="How to play WHALESHIP — infrastructure battleship with container-carrying whales, Kubernetes carriers and Linux icebergs.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WHALESHIP">
+<meta property="og:title" content="How to play WHALESHIP">
+<meta property="og:description" content="Battleship where the ships are infrastructure. Quick 9-sector games or the full 36-sector ocean — solo or against a friend.">
+<meta property="og:url" content="https://go.fridge.run/whaleship/how.html">
+<meta property="og:image" content="https://go.fridge.run/whaleship/img/og.jpg">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="WHALESHIP: a container whale, Kubernetes carriers and Linux icebergs on a sector-map ocean">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://go.fridge.run/whaleship/img/og.jpg">
 <title>How to play · WHALESHIP</title>
 <link rel="stylesheet" href="./styles/how.css">
 </head>
@@ -18,14 +28,15 @@
 <section class="hero">
   <h1>How to play</h1>
   <p class="lead">WHALESHIP is Battleship where the ships are infrastructure. Your fleet of container-carrying whales, Kubernetes carriers and Linux icebergs hides on a 3D ocean. Find the enemy's fleet and sink every vessel before they sink yours.</p>
-  <figure class="shot"><img src="./img/fleet.webp" width="1100" height="660" alt="A fleet on the 3D ocean: a container-carrying whale, Kubernetes carrier ships, a walrus storage node, Linux icebergs with penguins and squid proxies"><figcaption>Your fleet: Moby the Docker whale, Kubernetes carriers, walrus storage, Tux icebergs and squid proxies.</figcaption></figure>
-  <ul class="facts"><li>⏱ 5–15 minutes</li><li>👥 solo vs AI, or a friend</li><li>📱 phone or desktop</li><li>🔓 no account needed</li></ul>
+  <figure class="shot art"><img src="./img/hero.webp" width="1600" height="640" alt="A fleet on the 3D ocean: a container-carrying whale, Kubernetes carrier ships, a walrus storage node, Linux icebergs with penguins and squid proxies"><figcaption>Your fleet: Moby the Docker whale, Kubernetes carriers, walrus storage, Tux icebergs and squid proxies.</figcaption></figure>
+  <ul class="facts"><li>⚡ Quick: about 5 minutes</li><li>🌊 Full: 10–20 minutes</li><li>👥 solo vs AI, or a friend</li><li>📱 phone or desktop</li><li>🔓 no account needed</li></ul>
 </section>
 
 <section id="start">
   <h2>Quick start</h2>
   <ol class="steps">
-    <li><b>Pick a mode</b> on the start screen: <em>Warfare</em> is the default.</li>
+    <li><b>Pick a board</b>: <b>⚡ Quick</b> (9 sectors, 5 vessels, about five minutes) or <b>🌊 Full</b> (36 sectors, 10 vessels).</li>
+    <li><b>Pick a mode</b>: <em>Warfare</em> is the default.</li>
     <li><b>Play solo</b> against an AI captain (easy, normal or hard), or <b>Play a friend</b> to get an invite link.</li>
     <li>Your fleet is <b>deployed automatically</b>. You can drag creatures to move them before you're ready (turn on manual placement in ⚙ settings).</li>
     <li>On your turn, <b>aim at squares on the enemy map</b>, then <b>transmit</b>. Hits burn, misses splash.</li>
@@ -35,6 +46,20 @@
 
 <section id="aim">
   <h2>The map and aiming</h2>
+  <figure class="shot"><img src="./img/quick-menu.webp" width="1280" height="660" loading="lazy" alt="The start screen with the Quick board selected: nine labelled sectors A to I, and the QUICK, FULL, mode and play buttons"><figcaption>The start screen: choose ⚡ QUICK or 🌊 FULL, then a mode, then who to play.</figcaption></figure>
+  <h3>⚡ Quick board</h3>
+  <p>A 9 × 9 grid split into <b>9 sectors</b>, <code>A</code>–<code>I</code>, three across and three down. Each sector is the same 3 × 3 keypad, so <code>E5</code> is dead centre of the ocean.</p>
+  <div class="cols">
+    <pre class="grid">A B C
+D E F
+G H I</pre>
+    <pre class="grid small">1 2 3
+4 5 6
+7 8 9</pre>
+    <p>Five vessels — one of every role — and two firewall icebergs. Every special works, with one charge each.</p>
+  </div>
+  <figure class="shot"><img src="./img/quick-enemy.webp" width="1280" height="714" loading="lazy" alt="A quick game in progress: the 3 by 3 sector enemy map with burning hits and splash rings, and the A to I targeting keypad"><figcaption>A quick game on turn 9: the keypad shows how many squares are still open in each sector.</figcaption></figure>
+  <h3>🌊 Full board</h3>
   <p>The battlefield is an 18 × 18 grid split into <b>36 sectors</b>, named <code>A</code>–<code>Z</code> then <code>0</code>–<code>9</code>, six across and six down. Every sector is a 3 × 3 block numbered like a phone keypad:</p>
   <div class="cols">
     <pre class="grid">A B C D E F
@@ -58,7 +83,9 @@ Y Z 0 1 2 3
   </table>
   <figure class="shot"><img src="./img/enemy-map.webp" width="1100" height="660" loading="lazy" alt="The enemy map with burning hit marks, splash rings for misses, yellow scan signals and firewall icebergs, next to the targeting console"><figcaption>Enemy waters: burning hits, ○ misses, ? scan signals, icebergs — and the targeting console on the right.</figcaption></figure>
   <h3>Pings per turn</h3>
-  <p>Each turn you fire a <b>salvo</b>: one ping per vessel you still have afloat, up to four. A living Kubernetes carrier adds one more. You don't have to use them all — transmit whenever you like.</p>
+  <p>Each turn you fire a <b>salvo</b>: three pings on the quick board, four on the full board. A living Kubernetes carrier adds one more. Losing vessels costs you <b>at most one</b> ping, so the endgame never drops to one shot a turn.</p>
+  <p><b>Mop-up:</b> once your opponent is down to their <b>last two vessels</b>, you get <b>+1 ping</b> every turn — the final hunt goes fast. It works both ways. You don't have to use every ping — transmit whenever you like.</p>
+  <figure class="shot"><img src="./img/quick-incoming.webp" width="1280" height="714" loading="lazy" alt="Your own waters during the enemy's turn: packets arcing in, burning hits on a docker host, splash rings around your whale, carrier, iceberg and squid"><figcaption>Incoming: the enemy's salvo arcs into your waters. Fire marks damage, rings are misses.</figcaption></figure>
   <h3>Reading the board</h3>
   <ul class="legend">
     <li><span class="k miss">○</span> miss — open water</li>
@@ -72,13 +99,13 @@ Y Z 0 1 2 3
 
 <section id="fleet">
   <h2>Your fleet</h2>
-  <p>Every vessel runs part of your stack. Each square of a vessel carries one named container — sink the vessel and they all go down with it.</p>
+  <p>Every vessel runs part of your stack. Each square of a vessel carries one named container — sink the vessel and they all go down with it. The full board has ten vessels; the quick board has one of each kind (Moby 5, carrier 4, walrus 3, Tux 3, squid 2).</p>
   <div class="cards">
-    <article><h3>🐋 Moby · docker host</h3><p>Size 6. The big whale with a container rack. Powers <b>Tail Slap</b> and <b>OOM Kill</b>.</p></article>
-    <article><h3>🚢 Kubernetes carrier · orchestrator ×2</h3><p>Size 5. Runs your pods. Powers <b>Breach</b> and <b>Packet Flood</b>, and gives you <b>+1 ping</b> per turn while one is afloat.</p></article>
-    <article><h3>🦭 Walrus · storage ×2</h3><p>Size 4. Carries your persistent volumes. Powers <b>Restore</b> — no walrus, no backups.</p></article>
-    <article><h3>🐧 Tux · Linux iceberg ×3</h3><p>Size 3. Penguin admins and server racks. Powers <b>Port Scan</b> and <b>Traceroute</b>.</p></article>
-    <article><h3>🦑 Squid · network proxy ×2</h3><p>Size 2. While a squid is alive, enemy scans only see blurred signals. Powers <b>Tentacle Grab</b> and <b>DNS Poison</b>.</p></article>
+    <article><img src="./img/art-moby.webp" width="480" height="360" loading="lazy" alt="Moby: a blue whale carrying a rack of shipping containers"><h3>🐋 Moby · docker host</h3><p>Size 6. The big whale with a container rack. Powers <b>Tail Slap</b> and <b>OOM Kill</b>.</p></article>
+    <article><img src="./img/art-k8s.webp" width="480" height="360" loading="lazy" alt="A Kubernetes container ship with a helm-wheel bridge and stacked containers"><h3>🚢 Kubernetes carrier · orchestrator ×2</h3><p>Size 5. Runs your pods. Powers <b>Breach</b> and <b>Packet Flood</b>, and gives you <b>+1 ping</b> per turn while one is afloat.</p></article>
+    <article><img src="./img/art-walrus.webp" width="480" height="360" loading="lazy" alt="A walrus carrying storage drums on its back"><h3>🦭 Walrus · storage ×2</h3><p>Size 4. Carries your persistent volumes. Powers <b>Restore</b> — no walrus, no backups.</p></article>
+    <article><img src="./img/art-tux.webp" width="480" height="360" loading="lazy" alt="An iceberg with a penguin admin and black server racks"><h3>🐧 Tux · Linux iceberg ×3</h3><p>Size 3. Penguin admins and server racks. Powers <b>Port Scan</b> and <b>Traceroute</b>.</p></article>
+    <article><img src="./img/art-squid.webp" width="480" height="360" loading="lazy" alt="A purple squid proxy with colourful network-cable tentacles"><h3>🦑 Squid · network proxy ×2</h3><p>Size 2. While a squid is alive, enemy scans only see blurred signals. Powers <b>Tentacle Grab</b> and <b>DNS Poison</b>.</p></article>
   </div>
   <p class="note">Lose a role and its abilities go offline — sink their Moby and they can't Tail Slap any more.</p>
 </section>
@@ -102,6 +129,7 @@ Y Z 0 1 2 3
 
 <section id="modes">
   <h2>Modes</h2>
+  <p>Every mode works on both boards. Quick + Warfare is the fastest full-featured game.</p>
   <div class="cards">
     <article><h3>Classic</h3><p>Pure salvo battleship. No specials, no roles — just aim well.</p></article>
     <article><h3>Warfare <small>default</small></h3><p>Roles and specials as above. Most games are played here.</p></article>
@@ -111,7 +139,7 @@ Y Z 0 1 2 3
 
 <section id="friends">
   <h2>Playing with friends</h2>
-  <figure class="shot narrow"><img src="./img/phones.webp" width="700" height="762" loading="lazy" alt="The game on two phones: the enemy map with a full-width TRANSMIT button and swipeable weapons, and your own fleet"><figcaption>On a phone: tap squares, pinch to zoom, TRANSMIT.</figcaption></figure>
+  <figure class="shot"><img src="./img/quick-phones.webp" width="1260" height="640" loading="lazy" alt="Three phone screens: the start screen with QUICK selected, the enemy map mid-game, and your own fleet"><figcaption>On a phone: pick ⚡ QUICK, tap squares, pinch to zoom, TRANSMIT.</figcaption></figure>
   <ul>
     <li><b>Play a friend</b> gives you a link and a QR code. Whoever opens it joins your game — no account, no app.</li>
     <li>Games have <b>no time limit</b>. Close the tab; your seat waits. If an opponent goes silent for 7 days you can claim the win.</li>
@@ -131,7 +159,7 @@ target K · fire 5    pick sector K, then fire at K5
 nmap q5              port scan (also traceroute, hping3, oom, dnsmasq, restic)
 docker ps            your containers and their status
 kubectl get nodes    your vessels
-new hard chaos       start a new game
+new hard quick chaos start a quick game (or: new friend full)
 help                 everything else</pre>
   <p class="note">The terminal is part of the game. Nothing it shows is a real system.</p>
 </section>
@@ -143,6 +171,7 @@ help                 everything else</pre>
 
 <section id="faq">
   <h2>FAQ</h2>
+  <details><summary>Can I use the WHALESHIP art?</summary><p>Yes — to share or promote the game. There is a <a href="./img/og.jpg">banner</a>, a <a href="./img/og-quick.jpg">Quick-mode banner</a> and a <a href="./img/promo-square.jpg">square post image</a>. All of it is rendered from the game itself.</p></details>
   <details><summary>Do I need an account?</summary><p>No. You get a random captain name stored in a cookie on this device. If you're signed in to the host site, your account name is used instead.</p></details>
   <details><summary>What do you store?</summary><p>The state of each match (fleets, shots, turn) and a results line per finished game for the leaderboard (captain name, wins, accuracy). Finished matches are deleted after 7 days. No tracking, no ads.</p></details>
   <details><summary>Can I keep playing on another device?</summary><p>Yes — sign in with the same account on both. Your games appear in 🗂 Games on every device, and the one waiting on you opens automatically. As a guest, your seat lives in this browser only.</p></details>

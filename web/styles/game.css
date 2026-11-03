@@ -229,7 +229,7 @@ input,select{min-width:0;max-width:100%;border:2px solid var(--ink);border-radiu
   .bar{min-height:44px;padding-block:3px}.icon{width:36px;height:36px}.turn{top:6px;padding:6px 12px}.board-wrap{inset:48px 0 var(--hud-h)}.iso{--side:min(60cqw,108cqh - 150px)}}
 
 /* size picker */
-.sizes{flex:1 1 100%!important;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.sizes{flex:1 1 100%!important;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
 .sizes button{min-height:52px;display:grid;place-items:center;gap:0;padding:6px;border:1px solid #7fe3ff55;border-radius:12px;background:#0a1d29f2;color:#e9f8ff;box-shadow:0 4px 0 #04121c}
 .sizes button b{font:900 1rem var(--mono)}.sizes button small{font:600 .58rem var(--mono);opacity:.8;color:inherit}
 .sizes button[aria-pressed=true]{background:#e9f8ff;color:#04121c;border-color:#fff}

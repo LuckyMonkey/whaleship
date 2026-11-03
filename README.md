@@ -4,13 +4,15 @@
 
 **Battleship where the ships are infrastructure.** Your fleet of container-carrying whales, Kubernetes carriers and Linux icebergs hides on a living 3D ocean. Ping, port-scan, tail-slap and packet-flood your way through the enemy's cluster until every node is `NotReady`.
 
-![Your fleet: a Docker whale, Kubernetes carriers, a walrus storage node, Tux icebergs and squid proxies on the 3D ocean](docs/fleet.png)
+![WHALESHIP: a Docker whale, Kubernetes carriers and Linux icebergs on the sector-map ocean](web/img/og.jpg)
 
 - **Play in a browser** on a phone or desktop. No install, no account.
 - **Solo** against three AI captains, or **send a friend a link** (or a QR code) and they're in.
 - **Asynchronous**: no time limits, games persist across restarts, play several at once, and get **push notifications** (Web Push, even with the game closed) when it's your move.
 - **Sign in once, play anywhere** (optional single sign-on): your games follow your account to your phone. Installable to the home screen.
-- **Sector targeting**: 36 sectors (`A`–`Z`, `0`–`9`) of 3×3. Type `J5 B3 Q9 ⏎` on a keyboard, or just tap the map on a phone.
+- **Two boards**: **⚡ Quick** — 9 sectors (`A`–`I`), 5 vessels, about five minutes — or **🌊 Full** — 36 sectors (`A`–`Z`, `0`–`9`), 10 vessels. Every sector is a 3×3 keypad: type `E5 B3 ⏎` on a keyboard, or just tap the map on a phone.
+- **Fast endgames**: losing vessels costs at most one ping, and when your opponent is down to their last two vessels you get a +1 mop-up ping.
+- **Updates never break a game in progress**: saved matches carry a schema version and keep the rules they started with; every deploy dry-runs the new build against the saved games first ([docs/UPDATING.md](docs/UPDATING.md)).
 - **Infrastructure roles**: each vessel powers abilities. Sink their Docker host and they lose Tail Slap; sink their proxy and your scans stop being masked.
 - **Specials with real shapes**: T-shaped Tail Slap, + Breach, L Tentacle Grab, diamond Packet Flood, sector Port Scan, Traceroute, OOM Kill, DNS Poison decoys and Restore from backup.
 - **Chaos mode** adds Kubernetes events: self-healing replicas, `CrashLoopBackOff`, `ImagePullBackOff`, node drains, DNS failures and `OOMKilled`.
@@ -19,7 +21,7 @@
 
 | Enemy waters | On a phone |
 |---|---|
-| ![Enemy map with burning hit marks, scan signals and firewall icebergs](docs/enemy-map.png) | ![The game on two phone screens](docs/phones.png) |
+| ![A quick game: the A–I sector map with burning hits and splash rings, and the targeting keypad](web/img/quick-enemy.webp) | ![Three phone screens: start screen with QUICK selected, the enemy map, your fleet](web/img/quick-phones.webp) |
 
 How to play: [read it online](https://go.fridge.run/whaleship/how.html), or see [`web/how.html`](web/how.html) (served in-game at `/whaleship/how.html`, linked from the **?** button).
 
@@ -69,7 +71,9 @@ web/src/ocean3d.js  Three.js world: orthographic isometric camera, ocean shader 
                     Game of Life foam, procedural low-poly creatures, packets, fire, splashes
 web/src/creatures.js  2D fallback sprites (used when WebGL2 isn't available, or with ?2d)
 web/src/audio.js  procedural Web Audio: surf, whale song, splashes, explosions, reverb
-test/            node:test suite for the server rules
+test/            node:test suite: rules, quick board, endgame pace, state transfer across updates
+tools/deploy-fridge.sh  deploy with game-state transfer (snapshot → build → dry run → swap → verify)
+web/img/         how-to screenshots, creature art, Open Graph banners (all rendered from the game)
 ```
 
 There are no build steps and no frameworks. The server is the source of truth. The client only animates what the server says happened, and it never receives the positions of enemy vessels you haven't sunk.

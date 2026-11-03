@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import https from 'node:https';
 import crypto from 'node:crypto';
@@ -178,4 +178,71 @@ test('deleted games stay deleted: END_MATCH hides the game from that player for 
   await c.send({ type: 'END_MATCH', ...kb });
   assert.deepEqual((await c.send({ type: 'LIST_MATCHES', matches: [kb] })).matches, []);
   a.close(); b.close(); c.close();
+});
+
+test('QUICK: 9×9, sectors A–I, one vessel of every role, salvo 3 (+1 carrier), two firewalls', async () => {
+  const c = await solo({ size: 9 });
+  const st = c.st;
+  assert.equal(st.size, 9); assert.equal(st.w, 9); assert.equal(st.h, 9); assert.equal(st.sectors, true);
+  assert.deepEqual(st.fleet.map(f => f.len), [5, 4, 3, 3, 2]); assert.deepEqual(st.fleet.map(f => f.kind), [0, 1, 2, 3, 4]);
+  assert.equal(st.firewalls.length, 2); assert.equal(st.salvo, 4, 'salvo 3 + 1 for the living kubernetes carrier');
+  assert.ok(st.me.specials.every(sp => sp.ok || sp.why.startsWith('cooldown') || sp.free), 'every role is afloat, so no special starts offline');
+  const res = await c.act('FIRE', { cells: openCells(st).slice(0, 3) }); assert.ok(!res.error, res.error);
+  c.close();
+});
+
+test('endgame pace: salvo never drops more than one below the board max, and a quick game always finishes', async () => {
+  const c = await solo({ size: 9, rules: 'classic' }); let low = 9, turns = 0, st = c.st;
+  while (st.phase === 'playing' && turns++ < 60) {
+    low = Math.min(low, st.salvo);
+    const res = await c.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!res.error, res.error);
+    st = res.state; if (st.phase === 'playing' && st.turn !== st.seat) st = (await new Promise(r => setTimeout(r, 900)), c.st);
+  }
+  assert.equal(st.phase, 'finished'); assert.ok(low >= 2, `salvo fell to ${low}`); assert.ok(turns <= 30, `took ${turns} turns`);
+  c.close();
+});
+
+// ---- updates must never ruin a game in progress ----
+async function bootServer(dir, port) {
+  const p = spawn(process.execPath, ['server.js'], { cwd: path.resolve(import.meta.dirname, '..'), env: { ...process.env, PORT: port, DATA_DIR: dir, WEB_ROOT: path.resolve(import.meta.dirname, '../web') }, stdio: 'ignore' });
+  for (let i = 0; i < 50; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).ok) return p; } catch {} await new Promise(r => setTimeout(r, 100)); }
+  throw new Error('server did not start');
+}
+const stop = p => new Promise(r => { p.once('exit', r); p.kill('SIGTERM'); });
+function clientAt(port) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/whaleship/ws`); let st; const waiters = [];
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.state) st = m.state; if (m.type === 'CONNECTED') return; const w = waiters.shift(); if (w) w(m); };
+  const open = new Promise(r => { ws.onopen = r; });
+  return { open, get st() { return st; }, send(msg) { const p = new Promise(r => waiters.push(r)); ws.send(JSON.stringify(msg)); return p; },
+    act(type, data = {}) { return this.send({ type, session: st.id, revision: st.revision, action_id: crypto.randomUUID(), ...data }); }, close: () => ws.close() };
+}
+
+test('state transfer: a game in progress survives a server update + schema migration, under the rules it started with', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ws-xfer-')), port = PORT + 1;
+  let srvA = await bootServer(dir, port);
+  const a = clientAt(port); await a.open;
+  const created = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'warfare', size: 36, name: 't' });
+  await a.act('RANDOMIZE_FLEET'); await a.act('READY');
+  const fired = await a.act('FIRE', { cells: openCells(a.st).slice(0, a.st.salvo) }); assert.ok(!fired.error, fired.error);
+  await new Promise(r => setTimeout(r, 400)); const before = a.st; a.close();
+  await stop(srvA);                                                    // SIGTERM flushes pending saves
+  // rewrite the save as the previous release would have written it (schema v3, no pace field)
+  const f = path.join(dir, 'matches', created.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8'));
+  assert.equal(saved.v, 4); assert.equal(saved.pace, 1); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
+  // a file from a FUTURE schema (e.g. after a rollback) must be left alone, byte for byte
+  const fut = path.join(dir, 'matches', 'f'.repeat(32) + '.json'), futBody = JSON.stringify({ ...saved, id: 'f'.repeat(32), v: 99 }); writeFileSync(fut, futBody);
+  const check = JSON.parse(execFileSync(process.execPath, ['server.js', '--check-data', path.join(dir, 'matches')], { cwd: path.resolve(import.meta.dirname, '..'), env: { ...process.env, DATA_DIR: mkdtempSync(path.join(tmpdir(), 'ws-chk-')) } }).toString());
+  assert.equal(check.active, 1); assert.equal(check.migrated, 1); assert.equal(check.failed.length, 0); assert.equal(check.newer.length, 1);
+  assert.equal(readFileSync(f, 'utf8'), JSON.stringify(saved), '--check-data never writes');
+  const srvB = await bootServer(dir, port);
+  const b = clientAt(port); await b.open;
+  const resumed = await b.send({ type: 'RESUME_MATCH', session: created.state.id, credential: created.credential });
+  assert.equal(resumed.type, 'MATCH_RESUMED'); const st = resumed.state;
+  assert.equal(st.phase, before.phase); assert.equal(st.turn_number, before.turn_number); assert.equal(st.attacks.length, before.attacks.length);
+  assert.deepEqual(st.me.ships, before.me.ships); assert.deepEqual(st.opponent.shots, before.opponent.shots);
+  const next = await b.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!next.error, next.error);   // and it keeps playing
+  b.close(); await stop(srvB);
+  const after = JSON.parse(readFileSync(f, 'utf8')); assert.equal(after.v, 4); assert.equal(after.pace, 0, 'old game keeps the old salvo rule');
+  assert.equal(readFileSync(fut, 'utf8'), futBody, 'newer-schema file untouched');
+  rmSync(dir, { recursive: true, force: true });
 });

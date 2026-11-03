@@ -26,21 +26,25 @@ const MDIR = path.join(DATA, 'matches'), RESULTS = path.join(DATA, 'results.json
 fs.mkdirSync(MDIR, { recursive: true });
 
 /* ---------------- rules ---------------- */
-const SIZES = [10, 15, 18, 20, 30, 36];   // 36 = the sector map: 6×6 sectors (A–Z, 0–9) of 3×3 = 18×18 cells — the default and only new mode   // 15 = square sector map (5×5 sectors A–Y); 18 = 18×12 sector map (v0.7)                                                 // 18 = sector map: 18×12 = 6×4 sectors of 3×3
+const SIZES = [9, 10, 15, 18, 20, 30, 36];   // 9 = QUICK: 3×3 sectors (A–I) of 3×3 = 9×9 cells (v0.18)
+   // 36 = the sector map: 6×6 sectors (A–Z, 0–9) of 3×3 = 18×18 cells — the default and only new mode   // 15 = square sector map (5×5 sectors A–Y); 18 = 18×12 sector map (v0.7)                                                 // 18 = sector map: 18×12 = 6×4 sectors of 3×3
 const DIM = size => size === 18 ? { w: 18, h: 12 } : size === 36 ? { w: 18, h: 18 } : { w: size, h: size };
-const FLEET_LENS = { 36: [6, 5, 5, 4, 4, 3, 3, 3, 2, 2], 10: [5, 4, 3, 3, 2], 15: [6, 5, 4, 4, 3, 3, 2, 2], 18: [6, 5, 4, 4, 3, 3, 2, 2], 20: [6, 5, 5, 4, 4, 3, 3, 3, 2, 2], 30: [7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2] };
-const SALVO = { 36: 4, 10: 1, 15: 3, 18: 3, 20: 4, 30: 6 };
-const POWERS = { 36: { sonar: 2, depth: 1, tail: 2 }, 10: { sonar: 1, depth: 1, tail: 1 }, 15: { sonar: 2, depth: 1, tail: 2 }, 18: { sonar: 2, depth: 1, tail: 2 }, 20: { sonar: 2, depth: 1, tail: 2 }, 30: { sonar: 3, depth: 2, tail: 2 } };
+const FLEET_LENS = { 9: [5, 4, 3, 3, 2], 36: [6, 5, 5, 4, 4, 3, 3, 3, 2, 2], 10: [5, 4, 3, 3, 2], 15: [6, 5, 4, 4, 3, 3, 2, 2], 18: [6, 5, 4, 4, 3, 3, 2, 2], 20: [6, 5, 5, 4, 4, 3, 3, 3, 2, 2], 30: [7, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2] };
+const SALVO = { 9: 3, 36: 4, 10: 1, 15: 3, 18: 3, 20: 4, 30: 6 };
+const POWERS = { 9: { sonar: 1, depth: 1, tail: 1 }, 36: { sonar: 2, depth: 1, tail: 2 }, 10: { sonar: 1, depth: 1, tail: 1 }, 15: { sonar: 2, depth: 1, tail: 2 }, 18: { sonar: 2, depth: 1, tail: 2 }, 20: { sonar: 2, depth: 1, tail: 2 }, 30: { sonar: 3, depth: 2, tail: 2 } };
 const KINDS = ['moby', 'k8s', 'walrus', 'tux', 'squid'];   // docker host · orchestrator · storage · linux host · proxy
 function fleetFor(size) {
   const lens = FLEET_LENS[size];
-  const kinds = lens.map((len, id) => size === 10 ? id : len >= 6 ? 0 : len === 5 ? 1 : len === 4 ? 2 : len === 3 ? 3 : 4);
+  const kinds = lens.map((len, id) => size <= 10 ? id : len >= 6 ? 0 : len === 5 ? 1 : len === 4 ? 2 : len === 3 ? 3 : 4);
   const bases = lens.map((len, i) => `${KINDS[kinds[i]]}-${len}`), total = {}, seen = {};
   bases.forEach(b => total[b] = (total[b] || 0) + 1);
   return lens.map((len, id) => { const b = bases[id]; seen[b] = (seen[b] || 0) + 1; return { id, len, kind: kinds[id], name: total[b] > 1 ? b + String.fromCharCode(96 + seen[b]) : b }; });
 }
 const salvoFor = (m, s) => {
-  const me = m.seats[s]; let k = m.size === 10 ? 1 : Math.min(SALVO[m.size], me.ships.filter(sh => !isSunk(me, sh)).length);
+  const me = m.seats[s], live = sh => !isSunk(me, sh); let k = m.size === 10 ? 1 : Math.min(SALVO[m.size], me.ships.filter(live).length);
+  // v0.18 endgame pace (rules matches): losing vessels costs at most one ping, and once the enemy is down to its last
+  // two vessels everyone gets +1 "mop-up" ping — the final hunt no longer crawls along at one shot a turn.
+  if (m.pace >= 1 && m.rules && m.size !== 10) { const op = m.seats[1 - s]; k = Math.max(k, SALVO[m.size] - 1); if (op && op.ships.filter(sh => !isSunk(op, sh)).length <= 2) k++; }
   if (warfare(m)) { if (roleUp(m, me, 'swarm')) k++; if (me.rolling) k--; }      // swarm orchestrates +1 ping; a rolling update costs one
   return Math.max(1, k);
 };
@@ -51,7 +55,7 @@ const salvoFor = (m, s) => {
 const RULES = ['classic', 'warfare', 'chaos'];
 const warfare = m => m.rules === 'warfare' || m.rules === 'chaos';
 const ROLE = { moby: 0, swarm: 1, walrus: 2, tux: 3, squid: 4 };
-const C1 = { 10: 1, 15: 1, 18: 1, 20: 1, 30: 2, 36: 1 };
+const C1 = { 9: 1, 10: 1, 15: 1, 18: 1, 20: 1, 30: 2, 36: 1 };
 // Attack patterns are logical (dx, dy) offsets from the aimed cell (X = [0, 0]); rotatable ones turn 90° per step.
 // They follow the real grid and cross sector borders; off-board cells are dropped. The client imports the same table.
 const PATTERNS = {
@@ -69,7 +73,7 @@ function patternCells(size, cell, pattern, r = 0) {
 }
 // effect: damage | reveal | disrupt. needs: the creature role that powers it (sink it and the special goes offline).
 const SPECIALS = {
-  scan:    { needs: 'tux',    effect: 'reveal',  pattern: 'square',  cd: 3, charges: { 10: 1, 15: 2, 18: 2, 20: 2, 30: 3, 36: 2 } },
+  scan:    { needs: 'tux',    effect: 'reveal',  pattern: 'square',  cd: 3, charges: { 9: 1, 10: 1, 15: 2, 18: 2, 20: 2, 30: 3, 36: 2 } },
   trace:   { needs: 'tux',    effect: 'damage',  pattern: 'one',     cd: 2, charges: null },
   tail:    { needs: 'moby',   effect: 'damage',  pattern: 'tee',     cd: 0, charges: C1, rotates: true },
   oom:     { needs: 'moby',   effect: 'damage',  pattern: 'one',     cd: 0, charges: C1 },
@@ -80,7 +84,7 @@ const SPECIALS = {
   restore: { needs: 'walrus', effect: 'repair',  pattern: 'one',     cd: 0, charges: C1 },
 };
 const FREE = new Set(['dns', 'restore']);
-const FIREWALLS = { 10: 0, 15: 3, 18: 3, 20: 4, 30: 6, 36: 5 };                                   // iceberg cells: no ships, can't be targeted
+const FIREWALLS = { 9: 2, 10: 0, 15: 3, 18: 3, 20: 4, 30: 6, 36: 5 };                                   // iceberg cells: no ships, can't be targeted
 const drainedRoles = seat => [...(seat.drains || []), ...(seat.drained ? [seat.drained] : [])].filter(d => d.turns > 0).map(d => d.role);
 const roleUp = (m, seat, role) => !drainedRoles(seat).includes(role) && seat.ships.some(sh => m.fleet[sh.id].kind === ROLE[role] && !isSunk(seat, sh));
 const rolesOf = (m, seat) => Object.fromEntries(Object.keys(ROLE).map(r => [r, roleUp(m, seat, r)]));
@@ -158,18 +162,58 @@ function persist(m) {
     try { fs.writeFileSync(tmp, JSON.stringify(m)); fs.renameSync(tmp, f); } catch (e) { console.error('persist', m.id, e.message); }
   }, 150));
 }
-function load() {
-  for (const f of fs.readdirSync(MDIR)) {
-    if (!f.endsWith('.json')) continue;
+/* ---------------- saved-match schema: games in progress survive every update ----------------
+   A match keeps the rules it started under. New rules are pinned to new matches (m.pace), never applied mid-game.
+   Each schema bump adds one step to MIGRATIONS; load() upgrades old files in memory (written back on next save).
+   Files from a NEWER schema (after a rollback) are left untouched on disk and not served, so they can't be damaged.
+   `node server.js --check-data DIR` runs the same load against a copy of the data without writing anything. */
+const SCHEMA = 4, PACE = 1;
+const MIGRATIONS = {
+  // v1–v2 (no m.v) and v3 → v4: record that the match started under the original salvo rule (pace 0).
+  3: m => { m.pace ??= 0; },
+};
+function migrate(m) {
+  let v = Number(m.v) || 3;              // pre-v3 legacy matches have no v; they share the v3 → v4 step (legacy rules untouched)
+  if (v > SCHEMA) throw Object.assign(new Error(`schema v${v} is newer than this server (v${SCHEMA})`), { newer: true });
+  const from = v;
+  while (v < SCHEMA) { MIGRATIONS[v]?.(m); v++; }
+  if (from !== SCHEMA || m.v !== SCHEMA) m.v = SCHEMA;
+  return from;
+}
+function validate(m) {
+  const { w, h } = DIM(m.size), n = w * h, bad = [];
+  if (!m.id || !SIZES.includes(m.size)) bad.push('id/size');
+  if (!Array.isArray(m.seats) || m.seats.length !== 2) bad.push('seats');
+  else m.seats.forEach((st, i) => { if (!st) return; if (!Array.isArray(st.board) || st.board.length !== n) bad.push(`seat${i}.board`); if ((st.ships || []).some(sh => sh.cells.some(c => c < 0 || c >= n))) bad.push(`seat${i}.ships`); });
+  if (!Array.isArray(m.fleet)) bad.push('fleet');
+  return bad;
+}
+const expired = m => m.phase === 'finished' ? now() - (m.finished || 0) * 1000 > 7 * 864e5 : m.phase === 'lobby' && now() - m.created * 1000 > LOBBY_TTL;
+function readMatches(dir, onMatch) {
+  const report = { files: 0, loaded: 0, active: 0, finished: 0, expired: 0, migrated: 0, newer: [], failed: [] };
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.json')) continue; report.files++;
     try {
-      const m = JSON.parse(fs.readFileSync(path.join(MDIR, f), 'utf8'));
-      const old = m.phase === 'finished' ? now() - (m.finished || 0) * 1000 > 7 * 864e5 : m.phase === 'lobby' && now() - m.created * 1000 > LOBBY_TTL;
-      if (old) { fs.unlinkSync(path.join(MDIR, f)); continue; }
-      m.seats.forEach(s => { if (s) s.connected = !!s.ai; });
-      matches.set(m.id, m);
-    } catch (e) { console.error('load', f, e.message); }
+      const m = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (expired(m)) { report.expired++; onMatch?.(m, f, true); continue; }
+      if (migrate(m) !== SCHEMA) report.migrated++;
+      const bad = validate(m); if (bad.length) throw new Error('invalid: ' + bad.join(','));
+      report.loaded++; m.phase === 'finished' ? report.finished++ : report.active++;
+      onMatch?.(m, f, false);
+    } catch (e) { (e.newer ? report.newer : report.failed).push(`${f}: ${e.message}`); }
   }
-  console.log(`loaded ${matches.size} matches`);
+  return report;
+}
+function load() {
+  const report = readMatches(MDIR, (m, f, isExpired) => {
+    if (isExpired) { fs.unlinkSync(path.join(MDIR, f)); return; }
+    m.seats.forEach(s => { if (s) s.connected = !!s.ai; });
+    matches.set(m.id, m);
+  });
+  for (const x of report.newer) console.error('load skipped (left on disk untouched):', x);
+  for (const x of report.failed) console.error('load FAILED (left on disk untouched):', x);
+  console.log(`loaded ${matches.size} matches (${report.active} in progress, ${report.migrated} migrated to v${SCHEMA}, ${report.failed.length} failed, ${report.newer.length} newer)`);
+  return report;
 }
 function recordResult(m) {
   if (m.score_saved) return;
@@ -202,7 +246,7 @@ function view(m, s) {
   const me = m.seats[s], op = m.seats[1 - s], t = now(), mf = ensureManifest(m);
   const gone = x => !x ? 0 : x.ai || x.connected ? 0 : Math.floor((t - (x.lastSeen || t)) / 1000);
   return {
-    id: m.id, revision: m.revision, mode: m.mode, size: m.size, w: DIM(m.size).w, h: DIM(m.size).h, sectors: [15, 18, 36].includes(m.size), fleet: m.fleet, salvo: m.phase === 'playing' ? salvoFor(m, s) : SALVO[m.size],
+    id: m.id, revision: m.revision, mode: m.mode, size: m.size, w: DIM(m.size).w, h: DIM(m.size).h, sectors: [9, 15, 18, 36].includes(m.size), fleet: m.fleet, salvo: m.phase === 'playing' ? salvoFor(m, s) : SALVO[m.size],
     phase: m.phase, seat: s, turn: m.turn, turn_number: m.turn_number, created: m.created, started: m.started, finished: m.finished,
     rules: m.rules || null, firewalls: m.firewalls || [], events: (m.events || []).slice(-20),
     me: { manifest: mf[s], ships: me.ships, shots: me.board, ready: me.ready, remaining: remaining(me), powers: me.powers, specials: specialsView(m, me), decoys: me.decoys || [], roles: rolesOf(m, me), frozen: !!me.frozen, drained: drainedRoles(me)[0] || null, drains: drainedRoles(me) },
@@ -248,7 +292,7 @@ function createMatch(ws, msg) {
   const size = SIZES.includes(Number(msg.size)) ? Number(msg.size) : 36, rules = RULES.includes(msg.rules) ? msg.rules : 'warfare';
   const { w, h } = DIM(size), fw = new Set();
   while (fw.size < FIREWALLS[size]) fw.add(crypto.randomInt(w * h));
-  const m = { v: 3, rules, firewalls: [...fw], events: [], manifest: null, id: rid(16), mode, size, fleet: fleetFor(size), phase: mode === 'multiplayer' ? 'lobby' : 'deploy', revision: 1, turn: 0, turn_number: 0,
+  const m = { v: SCHEMA, pace: PACE, rules, firewalls: [...fw], events: [], manifest: null, id: rid(16), mode, size, fleet: fleetFor(size), phase: mode === 'multiplayer' ? 'lobby' : 'deploy', revision: 1, turn: 0, turn_number: 0,
     winner: null, reason: null, score_saved: false, created: Math.floor(now() / 1000), started: null, finished: null, attacks: [], seats: [null, null] };
   m.seats[0] = newSeat(ws.identity, ws.authed ? ws.name : clean(msg.name) || ws.name, m);
   if (mode !== 'multiplayer') {
@@ -607,7 +651,7 @@ async function identify(req) {
 }
 
 /* ---------------- HTTP: API + static client ---------------- */
-const TYPES = { '.webp': 'image/webp', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+const TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webmanifest': 'application/manifest+json', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 function json(res, code, obj, headers = {}) { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); }
 // BUILD is stamped into web/BUILD at deploy; asset URLs carry ?v=BUILD so caches (browser + Cloudflare) can never mix versions
 const BUILD = (() => { try { return fs.readFileSync(path.join(WEB, 'BUILD'), 'utf8').trim(); } catch { return 'dev'; } })();
@@ -657,6 +701,11 @@ setInterval(() => { for (const [id] of sockets) { const m = matches.get(id); if 
 
 // one-time import of v1 leaderboard rows (if mounted read-only at /import/scores.json)
 try { if (!fs.existsSync(RESULTS) && fs.existsSync('/import/scores.json')) { const rows = JSON.parse(fs.readFileSync('/import/scores.json', 'utf8')); fs.writeFileSync(RESULTS, rows.map(r => JSON.stringify({ ...r, size: 10 })).join('\n') + (rows.length ? '\n' : '')); console.log(`imported ${rows.length} v1 scores`); } } catch (e) { console.error('import', e.message); }
+if (process.argv[2] === '--check-data') {           // dry run: no writes, no deletes, no network
+  const r = readMatches(path.resolve(process.argv[3] || MDIR));
+  console.log(JSON.stringify({ schema: SCHEMA, ...r }, null, 1));
+  process.exit(r.failed.length ? 1 : 0);
+}
 load();
 server.listen(PORT, () => console.log(`whaleship2 listening on ${PORT}`));
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {

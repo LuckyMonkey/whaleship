@@ -32,3 +32,5 @@ footer{max-width:860px;margin:0 auto;padding:16px 16px 40px;display:flex;flex-wr
 @media (max-width:600px){section{padding:14px}.top{gap:10px}.top nav{display:none}.specials th:nth-child(2),.specials td:nth-child(2){display:none}}
 
 .shot{margin:16px 0;padding:0}.shot img{display:block;width:100%;height:auto;border-radius:12px;border:1px solid var(--line);box-shadow:0 12px 30px #0008}.shot figcaption{margin-top:6px;color:var(--muted);font-size:.85rem}.shot.narrow{max-width:520px}
+.shot.art img{aspect-ratio:5/2;object-fit:cover}
+.cards article>img{display:block;width:calc(100% + 28px);height:auto;margin:-12px -14px 10px;border-radius:12px 12px 0 0;border-bottom:1px solid var(--line);aspect-ratio:4/3;object-fit:cover}
