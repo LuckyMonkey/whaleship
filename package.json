@@ -5,11 +5,13 @@
   "main": "server.js",
   "license": "MIT",
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "jpeg-js": "^0.4.4",
     "web-push": "3.6.7",
     "ws": "8.18.3"
   },
   "engines": {
     "node": ">=22"
   },
-  "description": "Battleship where the ships are infrastructure \u2014 a browser game."
+  "description": "Battleship where the ships are infrastructure — a browser game."
 }

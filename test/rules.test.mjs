@@ -247,20 +247,27 @@ test('state transfer: a game in progress survives a server update + schema migra
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('invite links render a per-match link preview (Open Graph) without leaking anything', async () => {
-  const og = async j => { const html = await (await fetch(`http://127.0.0.1:${PORT}/whaleship/?j=${j}`)).text(); const g = k => (html.match(new RegExp(`property="og:${k}" content="([^"]*)"`)) || [])[1]; return { title: g('title'), desc: g('description'), image: g('image'), html }; };
+test('link previews: dynamic PNG cards per match for invites, battles and results, nothing leaked', async () => {
+  const og = async q => { const html = await (await fetch(`http://127.0.0.1:${PORT}/whaleship/${q}`)).text(); const g = k => (html.match(new RegExp(`property="og:${k}" content="([^"]*)"`)) || [])[1]; return { title: g('title'), desc: g('description'), image: g('image'), html }; };
+  const png = async u => { const r = await fetch(u.replace(/^https?:\/\/[^/]+/, `http://127.0.0.1:${PORT}`)); const b = Buffer.from(await r.arrayBuffer()); assert.equal(r.headers.get('content-type'), 'image/jpeg'); assert.equal(b[0], 0xff); assert.equal(b[1], 0xd8); assert.ok(b.length > 20000 && b.length < 300000, `card is ${b.length} bytes`); return b; };
   const host = client(); await host.open;
   const created = await host.send({ type: 'CREATE_MATCH', mode: 'multiplayer', size: 9, rules: 'chaos', name: 'Salty "Q" & co' });
   const j = Buffer.from(created.state.id, 'hex').toString('base64url');
-  let p = await og(j);
+  let p = await og(`?j=${j}`);
   assert.match(p.title, /challenges you to WHALESHIP/); assert.match(p.title, /Salty &quot;Q&quot; &amp; co/, 'names are HTML-escaped');
-  assert.match(p.desc, /Quick/); assert.match(p.desc, /Chaos/); assert.match(p.image, /\/whaleship\/img\/invite\/quick-chaos\.jpg/);
+  assert.match(p.desc, /Quick/); assert.match(p.desc, /Chaos/); assert.match(p.image, new RegExp(`/whaleship/og/${j}\\.jpg\\?s=lobby`));
   assert.ok(!p.html.includes(created.credential), 'no seat credential in the page');
   assert.equal(p.html.match(/property="og:title"/g).length, 1, 'generic block replaced, not duplicated');
+  const lobbyPng = await png(p.image);
   const guest = client(); await guest.open; await guest.send({ type: 'JOIN_MATCH', session: created.state.id, name: 'Kelp-7' });
-  p = await og(j); assert.match(p.title, /vs/); assert.match(p.image, /quick-chaos/);
-  assert.match((await og('nope')).title, /Sink their stack/, 'unknown invite → generic card');
-  assert.match((await og(Buffer.from('0'.repeat(32), 'hex').toString('base64url'))).title, /Sink their stack/);
-  const img = await fetch(`http://127.0.0.1:${PORT}/whaleship/img/invite/full-warfare.jpg`); assert.equal(img.headers.get('content-type'), 'image/jpeg');
-  host.close(); guest.close();
+  p = await og(`?j=${j}`); assert.match(p.title, / vs /); assert.notEqual(p.image.split('?s=')[1], undefined);
+  assert.ok(!(await png(p.image)).equals(lobbyPng), 'the card changes when the match changes');
+  // a finished solo game shared with ?r= gets a result card
+  const solo = await (async () => { const c = client(); await c.open; await c.send({ type: 'CREATE_MATCH', mode: 'easy', size: 9, rules: 'classic', name: 'Ace' }); await c.act('RANDOMIZE_FLEET'); await c.act('READY');
+    for (let i = 0; i < 60 && c.st.phase === 'playing'; i++) { const r = await c.act('FIRE', { cells: openCells(c.st).slice(0, c.st.salvo) }); if (r.state?.phase === 'playing' && r.state.turn !== r.state.seat) await new Promise(res => setTimeout(res, 50)); } return c; })();
+  assert.equal(solo.st.phase, 'finished');
+  const rr = await og(`?r=${Buffer.from(solo.st.id, 'hex').toString('base64url')}`); assert.match(rr.title, /won a WHALESHIP battle/); await png(rr.image);
+  for (const q of ['', '?j=nope', `?j=${Buffer.from('0'.repeat(32), 'hex').toString('base64url')}`]) { const d = await og(q); assert.match(d.title, /Sink their stack/); assert.match(d.image, /\/og\/default\.jpg/); }
+  await png(`http://x/whaleship/og/default.jpg`);
+  host.close(); guest.close(); solo.close();
 });

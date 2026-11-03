@@ -655,29 +655,50 @@ const TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpe
 function json(res, code, obj, headers = {}) { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); }
 // BUILD is stamped into web/BUILD at deploy; asset URLs carry ?v=BUILD so caches (browser + Cloudflare) can never mix versions
 const BUILD = (() => { try { return fs.readFileSync(path.join(WEB, 'BUILD'), 'utf8').trim(); } catch { return 'dev'; } })();
-/* ---------------- per-invite link previews (Open Graph) ----------------
-   Invite links are BASE/?j=<short id>. Link-preview crawlers fetch the page without running JS, so the server
-   swaps the generic <!--og--> block in index.html for one describing that match: who is challenging, board, mode,
-   and a banner for that board × mode (web/img/invite/<quick|full>-<rules>.jpg). Nothing secret is exposed:
-   only captain names, board, mode, phase and turn count — what the joiner sees in-game anyway. */
+/* ---------------- link previews (Open Graph): dynamic cards per match ----------------
+   ?j=<short id> (invite / your game) and ?r=<short id> (brag a result) unfurl with a 1200×630 JPEG drawn from the
+   match: lobby → "X challenges you", in progress → A vs B with vessels afloat, finished → winner + stats.
+   Crawlers don't run JS, so the server swaps the <!--og--> block in index.html. Only what a player would see is
+   exposed (captain names, board, mode, turn, sunk counts, hit stats) — never credentials or ship positions. */
+const og = require('./og.js');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const RULE_COPY = { classic: ['🎯 Classic', 'Pure salvo battleship — just aim well'], warfare: ['🐋 Warfare', 'Whales that tail-slap, squids that spoof DNS'], chaos: ['🔥 Chaos', 'Battleship, plus Kubernetes having a very bad day'] };
+const RULE_LABEL = { classic: 'Classic', warfare: 'Warfare', chaos: 'Chaos' };
+const matchFromShort = j => /^[A-Za-z0-9_-]{16,44}$/.test(j || '') ? matches.get(Buffer.from(j, 'base64url').toString('hex')) : null;
+function cardInfo(m, allowSolo) {
+  if (!m) return { kind: 'default', board: 'full', rules: 'warfare' };
+  const base = { board: m.size === 9 ? 'quick' : 'full', rules: RULE_LABEL[m.rules] ? m.rules : 'warfare', turn: m.turn_number || 0 };
+  const sunk = st => st ? st.ships.filter(sh => isSunk(st, sh)).length : 0, [a, b] = m.seats;
+  if (m.phase === 'finished' && m.seats[m.winner] && (allowSolo || m.mode === 'multiplayer')) {
+    const shots = m.attacks.filter(x => x.seat === m.winner && !x.reveal);
+    return { ...base, kind: 'result', winner: m.seats[m.winner].name, loser: m.seats[1 - m.winner]?.name, shots: shots.length, hits: shots.filter(x => x.hit).length };
+  }
+  if (m.mode !== 'multiplayer' || m.phase === 'finished') return { kind: 'default', board: base.board, rules: base.rules };
+  if (!b) return { ...base, kind: 'invite', a: a?.name };
+  return { ...base, kind: 'battle', a: a?.name, b: b?.name, fleet: m.fleet.length, sunkA: sunk(a), sunkB: sunk(b) };
+}
+function cardText(info) {
+  const board = info.board === 'quick' ? '⚡ Quick (9 sectors, ~5 min)' : '🌊 Full (36 sectors)', mode = RULE_LABEL[info.rules];
+  if (info.kind === 'invite') return [`⚓ ${info.a} challenges you to WHALESHIP!`, `${board} · ${mode}. Tap to accept and fire back — free, no account, no install.`];
+  if (info.kind === 'battle') return [`⚔️ ${info.a} vs ${info.b} — WHALESHIP, turn ${info.turn || 1}`, `${info.fleet - info.sunkA} vs ${info.fleet - info.sunkB} vessels afloat · ${board} · ${mode}. Tap to jump into the battle.`];
+  if (info.kind === 'result') return [`🏆 ${info.winner} won a WHALESHIP battle!`, `Sank ${info.loser}'s entire stack in ${info.turn} turns (${info.shots ? Math.round(100 * info.hits / info.shots) : 0}% accuracy). Think you can do better? Play free.`];
+  return ['WHALESHIP — Sink their stack.', 'Battleship where the ships are infrastructure. Play free — solo or with a friend, no account, no install.'];
+}
 let indexHtml = null;
-function invitePage(req, j) {
+function previewPage(req, url) {
   indexHtml ??= fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
-  if (!/^[A-Za-z0-9_-]{16,44}$/.test(j)) return indexHtml;
-  const m = matches.get(Buffer.from(j, 'base64url').toString('hex'));
-  if (!m || m.mode !== 'multiplayer') return indexHtml;
-  const origin = ORIGINS[0] || `https://${req.headers.host}`, board = m.size === 9 ? 'quick' : 'full', rules = RULE_COPY[m.rules] ? m.rules : 'warfare';
-  const [ruleLabel, ruleTag] = RULE_COPY[rules], boardLabel = board === 'quick' ? '⚡ Quick (9 sectors, ~5 min)' : '🌊 Full (36 sectors)';
-  const [a, b] = m.seats.map(st => st?.name || null);
-  let title, desc;
-  if (m.phase === 'finished') { const w = m.seats[m.winner]?.name, l = m.seats[1 - m.winner]?.name; title = `🏆 ${w} won a WHALESHIP battle`; desc = `${w} beat ${l} in ${m.turn_number} turns · ${boardLabel} · ${ruleLabel}. Start your own battle — no account, no install.`; }
-  else if (a && b) { title = `⚔️ ${a} vs ${b} — WHALESHIP`; desc = `Battle underway${m.turn_number ? ` · turn ${m.turn_number}` : ''} · ${boardLabel} · ${ruleLabel}. If this is your game, tap to jump back in.`; }
-  else { title = `⚓ ${a || 'A captain'} challenges you to WHALESHIP`; desc = `${boardLabel} · ${ruleLabel}: ${ruleTag}. Tap to take the empty seat — no account, no install.`; }
-  const img = `${origin}${BASE}/img/invite/${board}-${rules}.jpg${BUILD !== 'dev' ? '?v=' + BUILD : ''}`, url = `${origin}${BASE}/?j=${j}`;
-  const og = `<meta property="og:type" content="website"><meta property="og:site_name" content="WHALESHIP"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(url)}"><meta property="og:image" content="${esc(img)}"><meta property="og:image:type" content="image/jpeg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="WHALESHIP invite: ${esc(boardLabel)} · ${esc(ruleLabel)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}"><meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(img)}">`;
-  return indexHtml.replace(/<!--og-->[\s\S]*?<!--\/og-->/, `<!--og-->${og}<!--/og-->`);
+  const origin = ORIGINS[0] || `https://${req.headers.host}`, j = url.searchParams.get('j') || '', r = url.searchParams.get('r') || '', key = j || r;
+  const m = matchFromShort(key), info = cardInfo(m, !!r), [title, desc] = cardText(info);
+  const ver = m ? `${m.phase}.${m.turn_number || 0}.${m.seats[1] ? 2 : 1}` : 'x';
+  const img = `${origin}${BASE}/og/${m ? key : 'default'}.jpg?s=${ver}${BUILD !== 'dev' ? '.' + BUILD : ''}`;
+  const pageUrl = `${origin}${BASE}/${m ? (r ? '?r=' : '?j=') + key : ''}`;
+  const tags = `<meta property="og:type" content="website"><meta property="og:site_name" content="WHALESHIP"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(pageUrl)}"><meta property="og:image" content="${esc(img)}"><meta property="og:image:type" content="image/jpeg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="${esc(title)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}"><meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(img)}">`;
+  return indexHtml.replace(/<!--og-->[\s\S]*?<!--\/og-->/, `<!--og-->${tags}<!--/og-->`);
+}
+async function previewImage(res, key) {
+  const m = key === 'default' ? null : matchFromShort(key), info = cardInfo(m, true);
+  const ck = m ? `${m.id}:${m.phase}:${m.turn_number}:${m.seats.map(s => s?.name).join('|')}` : 'default';
+  try { const png = await og.renderCard(ck, info); res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': png.length, 'Cache-Control': 'public, max-age=300' }); res.end(png); }
+  catch (e) { if (e.message !== 'busy') console.error('og', e.message); res.writeHead(302, { Location: `${BASE}/img/og.jpg` }); res.end(); }
 }
 const server = http.createServer(async (req, res) => {
   try {
@@ -690,7 +711,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/metrics') { const active = [...matches.values()].filter(m => m.phase !== 'finished').length; return json(res, 200, { status: 'operational', infrastructure: { active_workers: active, max_workers: MAX_ACTIVE, backend: 'whaleship2', restarts: 0 } }); }
     if (p === '/api/leaderboard') return json(res, 200, leaderboard(['multiplayer', 'easy', 'normal', 'hard'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'multiplayer', url.searchParams.get('period')));
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
-    if ((p === '/' || p === '/index.html') && url.searchParams.has('j')) { const body = invitePage(req, url.searchParams.get('j')); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, max-age=0', 'Content-Length': Buffer.byteLength(body) }); return res.end(req.method === 'HEAD' ? undefined : body); }
+    { const mm = /^\/og\/([A-Za-z0-9_-]{1,44})\.jpg$/.exec(p); if (mm) return previewImage(res, mm[1]); }
+    if (p === '/' || p === '/index.html') { const body = previewPage(req, url); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, max-age=0', 'Content-Length': Buffer.byteLength(body) }); return res.end(req.method === 'HEAD' ? undefined : body); }
     const rel = p === '/' ? 'index.html' : decodeURIComponent(p).replace(/^\/+/, '');
     const file = path.resolve(WEB, rel);
     if (!file.startsWith(WEB + path.sep)) { res.writeHead(403); return res.end(); }
