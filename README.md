@@ -1,5 +1,7 @@
 # 🐋 WHALESHIP
 
+**▶ [Play now](https://go.fridge.run/whaleship/)** · [How to play](https://go.fridge.run/whaleship/how.html)
+
 **Battleship where the ships are infrastructure.** Your fleet of container-carrying whales, Kubernetes carriers and Linux icebergs hides on a living 3D ocean. Ping, port-scan, tail-slap and packet-flood your way through the enemy's cluster until every node is `NotReady`.
 
 ![Your fleet: a Docker whale, Kubernetes carriers, a walrus storage node, Tux icebergs and squid proxies on the 3D ocean](docs/fleet.png)
@@ -19,7 +21,7 @@
 |---|---|
 | ![Enemy map with burning hit marks, scan signals and firewall icebergs](docs/enemy-map.png) | ![The game on two phone screens](docs/phones.png) |
 
-How to play: see [`web/how.html`](web/how.html), served in-game at `/whaleship/how.html`.
+How to play: [read it online](https://go.fridge.run/whaleship/how.html), or see [`web/how.html`](web/how.html) (served in-game at `/whaleship/how.html`, linked from the **?** button).
 
 ## Run it
 
