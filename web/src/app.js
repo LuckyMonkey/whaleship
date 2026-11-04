@@ -228,6 +228,7 @@ function onState(msg) {
   if (mineNow && lastTurnMine === false && !queue.length) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); }
   lastTurnMine = mineNow;
   rememberMatch(); render(); playNext();
+  if (restoring && document.body.classList.contains('switching')) requestAnimationFrame(() => requestAnimationFrame(() => { document.body.classList.remove('switching'); clearTimeout(switchTimer); }));
 }
 
 /* ---------------- ongoing games ---------------- */
@@ -310,7 +311,11 @@ function endGame(id) {   // in progress → forfeit; not started → closed; fin
   forgetGame(id);
 }
 function switchGame(id) {
-  if (deletedGames.has(id)) { deletedGames.delete(id); try { localStorage.setItem('whaleship:deleted', JSON.stringify([...deletedGames])); } catch {} } if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true; join(id); }
+  if (deletedGames.has(id)) { deletedGames.delete(id); try { localStorage.setItem('whaleship:deleted', JSON.stringify([...deletedGames])); } catch {} } if (id === state?.id) return; $('#new-dialog').open && $('#new-dialog').close(); $('#result-overlay').hidden = true; H.replaceState(null, '', location.pathname + '?j=' + toShort(id)); joining = true;
+  if (settings.reduced) { join(id); return; }
+  document.body.classList.add('switching'); clearTimeout(switchTimer); switchTimer = setTimeout(() => document.body.classList.remove('switching'), 2500);   // never stuck dark
+  setTimeout(() => join(id), 170); }
+let switchTimer = 0;
 function paintGames() {
   const waiting = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length, b = $('#games-btn');
   b.dataset.count = waiting || ''; b.setAttribute('aria-label', waiting ? `Games — your move in ${waiting}` : 'Games');
@@ -601,7 +606,8 @@ function renderShips(shots) {
     el.style.gridArea = `${Math.floor(cell / N) + 1} / ${cell % N + 1}`; el.style.setProperty('--len', 1); el.style.setProperty('--i', i);
     el.innerHTML = `<div class="bb"><div class="spr">${bergSVG(i)}</div></div>`; b.append(el);
   }
-  b.querySelectorAll('.ship').forEach(e => { if (!live.has(e.dataset.key)) { e.remove(); shipCache.delete(e.dataset.key); } });
+  const other = view === 'home' ? 'target:' : 'home:';      // the other ocean's creatures wait, hidden, for the next swap
+  b.querySelectorAll('.ship').forEach(e => { const k = e.dataset.key; if (live.has(k)) e.hidden = false; else if (k.startsWith(other)) e.hidden = true; else { e.remove(); shipCache.delete(k); } });
 }
 function renderBoard() {
   const b = $('#board'); b.dataset.view = view;
@@ -807,10 +813,17 @@ async function slideTo(v, dir) {
   dir = dir || (v === 'target' ? 'left' : 'right');
   const w = R3 ? R3.canvas : $('#board-wrap');
   if (settings.reduced || document.hidden || sliding) { view = v; render(); return; }
-  sliding = true; const ms = settings.fast ? 170 : 300, out = dir === 'left' ? -1 : 1;
-  await w.animate([{transform: 'none', opacity: 1}, {transform: `translateX(${out * 115}%)`, opacity: .2}], {duration: ms, easing: 'cubic-bezier(.55,0,.9,.45)', fill: 'forwards'}).finished.catch(() => {});
+  if (R3) {   // 3D: the camera crosses the ocean; the canvas never moves or fades, so nothing behind it can flash through
+    sliding = true; const ms = settings.fast ? 320 : 540, swap = () => { view = v; render(); };
+    await Promise.race([R3.swap(dir === 'left' ? 1 : -1, swap, ms), sleep(ms * 3 + 300)]);
+    R3.swapEnd(); sliding = false; render(); return;
+  }
+  // one smooth move: a short slide that fades fully out, the swap while nothing shows, then a gentle slide in (no overshoot)
+  sliding = true; const ms = settings.fast ? 140 : 230, out = dir === 'left' ? -1 : 1;
+  await w.animate([{transform: 'none', opacity: 1}, {transform: `translateX(${out * 28}%)`, opacity: .35}], {duration: ms, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards'}).finished.catch(() => {});
   view = v; render();
-  await w.animate([{transform: `translateX(${-out * 115}%)`, opacity: .2}, {transform: 'none', opacity: 1}], {duration: ms + 60, easing: 'cubic-bezier(.15,.7,.3,1.1)', fill: 'forwards'}).finished.catch(() => {});
+  await new Promise(r => requestAnimationFrame(() => r()));      // the swapped board paints once while hidden
+  await w.animate([{transform: `translateX(${-out * 28}%)`, opacity: .35}, {transform: 'none', opacity: 1}], {duration: ms + 50, easing: 'cubic-bezier(0,0,.2,1)', fill: 'forwards'}).finished.catch(() => {});
   w.getAnimations().forEach(a => a.cancel());
   sliding = false; render();
 }
@@ -844,12 +857,13 @@ function glyph(c, g, x, y, size, rot = 0, alpha = 1) { c.globalAlpha = alpha; c.
 // A launch is drawn as a topology link: source node → packet along a ballistic arc → target node with its address.
 function fly(start, end, T, opt = {}) {
   const color = opt.color || '#23e4d0', g0 = opt.glyph || '🚀', size = Math.max(24, Math.min(44, Math.min(FX.w, FX.h) * .07));
-  const C = {x: (start.x + end.x) / 2, y: Math.min(start.y, end.y) - Math.max(100, FX.h * .42)};
+  const lift = Math.max(40, Math.min(FX.h * .3, Math.hypot(end.x - start.x, end.y - start.y) * .35));   // a clean arc, sized to the distance
+  const C = {x: (start.x + end.x) / 2, y: Math.min(start.y, end.y) - lift}, onScreen = start.y >= 0 && start.y <= FX.h;
   return new Promise(resolve => fxAdd({dur: T, draw(c, p, now) {
     const t = p < .5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2, pt = bez(start, C, end, t), q = bez(start, C, end, Math.min(1, t + .01));
     curve(c, start, C, end, 1, color, 1.2, .25, [3, 6], -now / 40);                          // planned route
     curve(c, start, C, end, t, color, 6, .18); curve(c, start, C, end, t, color, 2.2, .95);    // travelled link (glow + core)
-    node(c, start, color, opt.from); node(c, end, color, opt.to, .5 + .5 * Math.sin(now / 90) ** 2);
+    if (onScreen) node(c, start, color, opt.from); node(c, end, color, opt.to, .5 + .5 * Math.sin(now / 90) ** 2);
     if (opt.hops) for (let h = 1; h <= 5; h++) { if (t < h / 6) break; const hp = bez(start, C, end, h / 6); c.globalAlpha = 1; c.fillStyle = color; c.font = `700 10px ${MONO}`; c.textAlign = 'center'; c.fillText(`ttl=${h}`, hp.x, hp.y - 10); c.beginPath(); c.arc(hp.x, hp.y, 3, 0, 6.283); c.fill(); }
     const rot = g0 === '🚀' ? Math.atan2(q.y - pt.y, q.x - pt.x) + Math.PI / 4 : g0 === '📨' ? Math.atan2(q.y - pt.y, q.x - pt.x) * .25 : now / 120;
     glyph(c, g0, pt.x, pt.y, size * (1 + .5 * Math.sin(Math.PI * t)), rot);
@@ -997,23 +1011,20 @@ async function playNext() {
     } else { fxText(p, 'SCANNED', '#ff9a7c'); log(`${ts()} ⚠ ENEMY NETWORK ACTIVITY: port scan around ${lc(a.cell)}`, 'error'); }
     await sleep(fast ? 300 : 700);
   } else {
-    view = from; render();
+    if (view !== to) { audio.sound('launch', incoming); await slideTo(to, incoming ? 'right' : 'left'); }
     await ensureVisible(g.map(x => x.cell));
-    const afloat = state.me.ships.flatMap(s => s.cells).filter(c => (state.me.shots[c] || 0) < 2);
-    const T = fast ? 750 : 1150, center = power ? g[Math.floor(g.length / 2)] : null, shots = power ? [center] : g;
+    const T = fast ? 650 : 1000, center = power ? g[Math.floor(g.length / 2)] : null, shots = power ? [center] : g;
     const color = incoming ? '#ff8a5c' : power === 'depth' || power === 'flood' ? '#ff5a2e' : power === 'tail' || power === 'trace' ? '#8ab4ff' : power === 'oom' ? '#ff3b6b' : '#23e4d0';
     if (power === 'oom' && !settings.reduced) { const sh = (incoming ? state.me.ships : state.opponent?.sunk || []).find(s => s.cells.includes(g[0].cell)); kernelPanic(sh ? POD(sh.id) : null, incoming); }
     const geom = geo();
-    const flights = shots.map((x, i) => sleep(i * (fast ? 60 : 120)).then(() => {
-      const srcCell = incoming ? Math.floor(Math.random() * CELLS()) : afloat[Math.floor(Math.random() * afloat.length)] ?? x.cell;
-      const ship = !incoming && state.me.ships.find(s => s.cells.includes(srcCell));
+    const edgeCell = c => { const col = c % N, row = Math.floor(c / N), r = incoming ? 0 : HT - 1; return (row === r ? HT - 1 - r : r) * N + col; };   // same column, the sender's edge
+    const flights = shots.map((x, i) => sleep(i * (fast ? 70 : 140)).then(() => {
       audio.sound(i === 0 ? (power === 'depth' ? 'depth' : 'launch') : 'packet', incoming);
-      const s = cellPoint(srcCell, geom), e = cellPoint(x.cell, geom);
+      const e = cellPoint(x.cell, geom), s = {x: e.x + (i - (shots.length - 1) / 2) * 24, y: incoming ? -30 : FX.h + 30};
       if (power === 'depth' || power === 'flood') return fxFlood(s, e, T);
-      if (R3) return R3.launch(srcCell, x.cell, {color, dur: T / 1000});   // a glowing 3D packet with a light trail
-      return fly(s, e, T, {color, glyph: power === 'tail' || power === 'trace' ? '🛰️' : power === 'oom' ? '💀' : power === 'chaos' ? '☸️' : incoming ? '🚀' : '📨', hops: power === 'tail' || power === 'trace', from: incoming ? enemyUser.user : ship ? POD(ship.id) : '', to: `${coord(x.cell)} ${ip(x.cell, !incoming)}`});
+      if (R3) return R3.launch(edgeCell(x.cell), x.cell, {color, dur: T / 1000});   // a glowing 3D packet with a light trail
+      return fly(s, e, T, {color, glyph: power === 'tail' || power === 'trace' ? '🛰️' : power === 'oom' ? '💀' : power === 'chaos' ? '☸️' : incoming ? '🚀' : '📨', hops: power === 'tail' || power === 'trace', to: `${coord(x.cell)} ${ip(x.cell, !incoming)}`});
     }));
-    await sleep(T * 0.3); slideTo(to, incoming ? 'right' : 'left');       // oceans swap mid-flight; links keep their arcs
     await Promise.all(flights);
     if (power === 'tail') { const g2 = geo(); g.forEach((x, i) => fxText(cellPoint(x.cell, g2), `hop ${i + 1}`, '#8ab4ff', 12, 900, i * 70)); audio.sound('tail'); await sleep(fast ? 120 : 260); }
     const lock = fxLock(cellPoint(g[0].cell)); await sleep(fast ? 140 : 320); lock.kill = true;

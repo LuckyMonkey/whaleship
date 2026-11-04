@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.18.1 — 2026-11-04
+
+**Smoother turns: no more flashing between your ocean and theirs.** Client-only; the server, saved matches and their
+rules are unchanged, so games in progress carry on exactly as they were.
+
+- **No background flash**: in 3D the camera now glides across the ocean to the other fleet. Before, the whole 3D
+  canvas slid and faded, and the flat sky colour behind it flashed through on every turn change.
+- **One move per volley**: a shot no longer jumps to your own fleet and back before it lands. The ocean changes at most
+  once, before the packets fly.
+- **Cleaner launch paths**: packets come in from the sender's edge (yours from the bottom, theirs from the top) on a
+  low arc sized to the distance, instead of steep arcs from random cells that crossed the whole screen.
+- **Switching games**: a short fade instead of a hard cut when you jump between matches.
+- 2D board (no WebGL2): a shorter slide that keeps the board visible through the swap.
+
 ## 0.18.0 — 2026-11-03
 
 **Quick games, faster endgames, link previews that sell the game, and updates that never break a game in progress.**

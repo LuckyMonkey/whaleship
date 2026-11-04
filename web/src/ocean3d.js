@@ -330,7 +330,9 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 400), base = new THREE.Vector3(), target = new THREE.Vector3(), DIR = new THREE.Vector3(1, 1.08, 1).normalize(), DIST = 70;
   const RIGHT = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), DIR).normalize() /* screen-right on the ground */, FWD = new THREE.Vector3(-DIR.x, 0, -DIR.z).normalize(), SIN_EL = DIR.y;
   let N = 15, HT = 15, viewH = 16, glide = null, framePx = {x: 0, y: 0}, insets = {top: 0, right: 0, bottom: 0, left: 0}, last3 = {z: 1, px: 0, py: 0};
-  const placeCamera = () => { camera.position.copy(target).addScaledVector(DIR, DIST); camera.lookAt(target); camera.updateMatrixWorld(); };
+  // panOff: a sideways camera offset for swapping oceans in-world (see swap()) - the canvas itself never moves or fades
+  let pan = null, panOff = 0; const look = new THREE.Vector3();
+  const placeCamera = () => { look.copy(target).addScaledVector(RIGHT, panOff); camera.position.copy(look).addScaledVector(DIR, DIST); camera.lookAt(look); camera.updateMatrixWorld(); };
   scene.add(new THREE.HemisphereLight('#d8f2ff', '#0b4a7a', 1.15));
   const sun = new THREE.DirectionalLight('#fff3df', 2.4); sun.position.set(18, 30, 6); sun.castShadow = Q.shadows;
   Object.assign(sun.shadow.camera, {left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 80}); sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024); sun.shadow.bias = -.0008; scene.add(sun, sun.target);
@@ -427,6 +429,12 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       prev.needsUpdate = next.needsUpdate = true; }
     oceanMat.uniforms.uTime.value = time; oceanMat.uniforms.uMix.value = genT / GEN_MS;
     if (glide) { glide.t = Math.min(1, glide.t + dt / glide.dur); const e = 1 - (1 - glide.t) ** 3; target.lerpVectors(glide.from, glide.to, e); camera.zoom = glide.z0 + (glide.z1 - glide.z0) * e; camera.updateProjectionMatrix(); placeCamera(); if (glide.t >= 1) glide = null; }
+    if (pan) {   // out: ease-in to one side; swap while the board is off-screen; in: ease-out from the other side
+      pan.t += dt / pan.half;
+      if (pan.phase === 0) { const u = Math.min(1, pan.t); panOff = pan.dir * pan.dist * u * u; if (u >= 1) { pan.phase = 1; pan.t = 0; pan.runMid(); panOff = -pan.dir * pan.dist; } }
+      else { const u = Math.min(1, pan.t); panOff = -pan.dir * pan.dist * (1 - u) ** 3; if (u >= 1) { panOff = 0; const d = pan.done; pan = null; d(); } }
+      placeCamera();
+    }
     fxTick(dt); packetTick(dt); stuntTick(dt);
     for (const c of cruisers) { c.a += dt * c.speed; const R = Math.max(N, HT) * .5 + c.r, x = Math.cos(c.a) * R * 1.15, z = Math.sin(c.a) * R; c.m.position.set(x, Math.sin(time * 1.1 + c.a) * .04, z); c.m.rotation.y = -c.a - (c.speed > 0 ? Math.PI / 2 : -Math.PI / 2); c.m.rotation.z = Math.sin(time * .9 + c.a) * .03; c.m.userData.update?.(time); }
     for (const o of deco) o.userData.update?.(time, dt);
@@ -471,6 +479,14 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     pickContainer(cx, cy) { setRay(cx, cy); const list = []; for (const [key, c] of creatures) if (c.visible) c.userData.boxes.forEach((b, j) => b.visible && list.push(Object.assign(b, {_key: key, _j: j}))); const h = ray.intersectObjects(list, false)[0]; return h ? {key: h.object._key, j: h.object._j} : null; },
     setHover(cell) { if (cell == null || cell < 0) { hover.visible = false; return; } const p = cellCenter(cell % N, Math.floor(cell / N)); hover.position.x = p.x; hover.position.z = p.z; hover.visible = true; },
     // items: [{key, kind, len, cells (sorted), vertical, hits: [segment idx], sunk, fresh, seed, labels}] — anything not listed is hidden
+    // Swap oceans in-world: the camera glides sideways (dir +1 = the board leaves to the left), mid() swaps what is shown
+    // while the board is out of view, and the camera glides back in from the other side. Resolves when it has settled.
+    swap(dir, mid, ms = 520) {
+      this.swapEnd();
+      const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight), dist = viewH * aspect / Math.max(.25, camera.zoom) * .85;
+      return new Promise(done => { let ran = false; pan = {t: 0, phase: 0, half: ms / 2000, dir, dist, done, runMid() { if (!ran) { ran = true; mid?.(); } }}; });
+    },
+    swapEnd() { if (!pan) return; const p = pan; pan = null; p.runMid(); panOff = 0; placeCamera(); p.done(); },   // finish now (tab hidden, timeout)
     syncCreatures(items) {
       const live = new Set();
       for (const it of items) {

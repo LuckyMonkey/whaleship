@@ -434,3 +434,10 @@ body:not([data-phase=menu]) .hud-signin{display:none}
 .account-line{color:#c9f7da}
 .signin-link.wide-btn{display:flex;margin:6px 0 10px;text-decoration:none}
 .signin-link[hidden]{display:none!important}
+
+/* 0.19: smoother turns - the board moves on the compositor, hidden creatures stay built, and switching games fades */
+/* (no will-change: a permanent layer costs more than it saves on low-end GPUs) */
+.ship[hidden] { display: none !important; }
+#sea { transition: opacity .17s ease; }
+body.switching #sea { opacity: .15; }
+@media (prefers-reduced-motion: reduce) { #sea { transition: none; } }
