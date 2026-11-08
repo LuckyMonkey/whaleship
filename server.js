@@ -81,7 +81,7 @@ const SPECIALS = {
   flood:   { needs: 'swarm',  effect: 'disrupt', pattern: 'diamond', cd: 0, charges: C1 },
   grab:    { needs: 'squid',  effect: 'damage',  pattern: 'ell',     cd: 0, charges: C1, rotates: true },
   dns:     { needs: 'squid',  effect: 'decoy',   pattern: 'one',     cd: 0, charges: C1 },
-  restore: { needs: 'walrus', effect: 'repair',  pattern: 'one',     cd: 0, charges: C1 },
+  restore: { needs: 'walrus', effect: 'repair',  pattern: 'one',     cd: 0, charges: C1 },   // pace 2: relocate() - restored whole, elsewhere
 };
 const FREE = new Set(['dns', 'restore']);
 const FIREWALLS = { 9: 2, 10: 0, 15: 3, 18: 3, 20: 4, 30: 6, 36: 5 };                                   // iceberg cells: no ships, can't be targeted
@@ -167,7 +167,7 @@ function persist(m) {
    Each schema bump adds one step to MIGRATIONS; load() upgrades old files in memory (written back on next save).
    Files from a NEWER schema (after a rollback) are left untouched on disk and not served, so they can't be damaged.
    `node server.js --check-data DIR` runs the same load against a copy of the data without writing anything. */
-const SCHEMA = 4, PACE = 1;
+const SCHEMA = 4, PACE = 2;   // pace 2 (v0.19): restore relocates the creature (relocate()); older matches keep the one-segment repair
 const MIGRATIONS = {
   // v1–v2 (no m.v) and v3 → v4: record that the match started under the original salvo rule (pace 0).
   3: m => { m.pace ??= 0; },
@@ -489,8 +489,35 @@ function special(m, s, msg) {
     if (op.board[cell] === 2 && sh && !isSunk(op, sh)) { const res = strike(m, s, sh.cells.filter(c => op.board[c] === 0), 'oom'); res.forEach(a => a.oom = true); if (!res.length) return null; }
     else strike(m, s, [cell], 'oom');
   } else if (id === 'dns') me.decoys.push(cell);
+  else if (id === 'restore' && m.pace >= 2) {
+    const sh = me.ships.find(x => x.cells.includes(cell)), r2 = relocate(m, s, sh, cell);
+    m.attacks.push({ seat: s, cell, hit: false, sunk: null, turn, power: 'restore', reveal: true, restored: true, moved: !!r2, area: r2 ? r2.area : [cell], wiped: r2 ? r2.wiped : 1 });
+  }
   else if (id === 'restore') { me.board[cell] = 0; m.attacks.push({ seat: s, cell, hit: false, sunk: null, turn, power: 'restore', reveal: true, restored: true }); }
   return null;
+}
+// v0.19 restore (pace >= 2): the damaged creature is restored from backup somewhere else. It comes back whole at a
+// random spot whose bow lies inside the 5×5 square around the segment you picked, never on another creature, a decoy,
+// an iceberg or water the enemy has already ruled out. The enemy's own map of that square is wiped (its misses there,
+// and every hit it had on this creature), so it has to check those squares again; hits on OTHER creatures stay.
+// The record only carries the square and the picked segment (both already known to the enemy), never the new spot.
+function relocate(m, s, ship, pick) {
+  const me = m.seats[s], op = m.seats[1 - s], { w, h } = DIM(m.size), px = pick % w, py = Math.floor(pick / w);
+  const square = []; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const x = px + dx, y = py + dy; if (x >= 0 && y >= 0 && x < w && y < h) square.push(y * w + x); }
+  const wiped = new Set(ship.cells.filter(c => me.board[c] === 2)); for (const c of square) if (me.board[c] === 1) wiped.add(c);
+  const others = new Set(me.ships.filter(x => x !== ship).flatMap(x => x.cells)), decoys = new Set(me.decoys || []);
+  const after = c => wiped.has(c) ? 0 : me.board[c], here = ship.cells.join();
+  const spots = [];
+  for (const c of square) for (const v of [false, true]) {
+    const cells = footprint(m.size, ship.cells.length, c % w, Math.floor(c / w), v);
+    if (cells && cells.join() !== here && cells.every(x => !others.has(x) && !decoys.has(x) && after(x) === 0)) spots.push(cells);
+  }
+  if (!spots.length) { for (const c of ship.cells) if (me.board[c] === 2) me.board[c] = 0; return null; }   // nowhere to go: repaired in place
+  const area = [...new Set([...square, ...ship.cells.filter(c => me.board[c] === 2)])];
+  for (const c of wiped) me.board[c] = 0;
+  ship.cells = spots[crypto.randomInt(spots.length)];
+  op.sonar = (op.sonar || []).filter(x => !area.includes(x.cell));                 // its scans of that water are stale too
+  return { area, wiped: wiped.size };
 }
 function finish(m, winner, reason) {
   m.phase = 'finished'; m.winner = winner; m.reason = reason; m.finished = Math.floor(now() / 1000); recordResult(m);

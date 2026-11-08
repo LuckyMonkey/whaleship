@@ -30,8 +30,8 @@ const POWER_INFO = {
     tip: 'OOM killer: aim at a damaged creature (a hit square) and the whole thing is killed. On fresh water it is a normal ping.'},
   dns: {emoji: '☠️', label: 'DNS POISON', short: 'DNS', cmd: 'dnsmasq --poison', what: 'plant a decoy (free action)', area: 'one', own: true, needs: 'squid',
     tip: 'DNS poison: plant a fake host in your own waters. It shows up on their scans and traceroutes. Free action.'},
-  restore: {emoji: '💾', label: 'RESTORE', short: 'RESTORE', cmd: 'restic restore latest --target', what: 'repair a damaged part (free)', area: 'one', own: true, needs: 'walrus',
-    tip: 'Restore from backup: repair one damaged (not sunk) segment of your creature. Needs your walrus (storage). Free action.'},
+  restore: {emoji: '💾', label: 'RESTORE', short: 'RESTORE', cmd: 'restic restore latest --target', what: 'restore a damaged creature somewhere nearby (free)', area: 'one', own: true, needs: 'walrus',
+    tip: 'Restore from backup: pick a damaged (not sunk) segment. The whole creature comes back undamaged at a random spot within 5×5 squares of it, never on top of another creature, and the enemy loses everything it had found in that square. Needs your walrus (storage). Free action.'},
   sonar: {emoji: '📡', label: 'PORT SCAN', short: 'SCAN', cmd: 'nmap -sS', what: 'reveal a 3×3 block', area: 'sq', pattern: 'square'},
   depth: {emoji: '🌊', label: 'SYN FLOOD', short: 'FLOOD', cmd: 'hping3 --flood', what: 'hit a 3×3 block', area: 'sq', pattern: 'square'},
   tail: {emoji: '🛰️', label: 'TRACEROUTE', short: 'TRACE', cmd: 'traceroute -m 5', what: 'hit a line of 5', area: 'line', pattern: 'line'},
@@ -962,10 +962,23 @@ async function playNext() {
     if (!a.reveal) g.forEach(x => log(incoming ? `${ts()} ${x.hit ? 'container die' : 'missed'} ${lc(x.cell)}` : `${lc(x.cell)} (${ip(x.cell, true)}): ${x.hit ? 'HIT' : 'MISS'}`, x.hit ? (incoming ? 'error' : 'hit') : 'miss'));
   } else if (a.restored) {
     const v = incoming ? 'target' : 'home'; if (view !== v) await slideTo(v);
-    const p = cellPoint(a.cell); fxBurst(p, '💾', 44, 900); fxRing(p, 4, 50, '#3ddc84', 900); fxText(p, 'RESTORED', '#3ddc84', 18); audio.sound('join');
-    renderBoard();
-    log(incoming ? `${ts()} ⚠ ${oppName()} ran restic restore: ${coord(a.cell)} is back online (hit it again)` : `restoring snapshot latest → ${coord(a.cell)} ... done (1 segment repaired)`, incoming ? 'error' : 'hit');
-    await sleep(fast ? 500 : 1100);
+    if (a.moved) {
+      // v0.19 restore: the creature slips away and is restored whole somewhere in the 5×5 square; the attacker's map
+      // of that square is wiped. The record never says where it went - the defender's own board shows it.
+      await ensureVisible(a.area);
+      const g2 = geo(), p = cellPoint(a.cell, g2);
+      a.area.forEach((c, i) => fxRing(cellPoint(c, g2), 3, cellPoint(c, g2).w * .55, '#3ddc84', 800, i * 18, 2));
+      fxBurst(p, '💾', 44, 900); fxText(p, incoming ? 'IT SLIPPED AWAY' : 'RESTORED · RELOCATED', '#3ddc84', 18); audio.sound('join');
+      renderBoard();
+      log(incoming ? `${ts()} ⚠ ${oppName()} ran restic restore: the creature at ${coord(a.cell)} is back online somewhere nearby, and your scan results for ${a.area.length} squares around it are stale (${a.wiped} wiped). Search again.`
+        : `restoring snapshot latest → a new host near ${coord(a.cell)} ... done (whole creature restored; the enemy lost ${a.wiped} of its marks there)`, incoming ? 'error' : 'hit');
+      await sleep(fast ? 600 : 1400);
+    } else {
+      const p = cellPoint(a.cell); fxBurst(p, '💾', 44, 900); fxRing(p, 4, 50, '#3ddc84', 900); fxText(p, 'RESTORED', '#3ddc84', 18); audio.sound('join');
+      renderBoard();
+      log(incoming ? `${ts()} ⚠ ${oppName()} ran restic restore: ${coord(a.cell)} is back online (hit it again)` : `restoring snapshot latest → ${coord(a.cell)} ... done (1 segment repaired)`, incoming ? 'error' : 'hit');
+      await sleep(fast ? 500 : 1100);
+    }
   } else if (a.pattern) {
     // animal attacks: show the creature and the exact pattern, then resolve the strikes that follow it
     const strikes = []; while (queue.length && queue[0].power === a.power && queue[0].seat === a.seat && !queue[0].reveal) strikes.push(queue.shift());

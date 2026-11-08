@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.19.0 — 2026-11-07
+
+**Restore moves your creature.** Pinned per match (`pace` 2): games started before this release keep the old
+one-segment repair until they finish.
+
+- **💾 Restore** (warfare and chaos): pick a damaged (not sunk) segment of one of your creatures. The whole creature is
+  restored from backup, undamaged, at a random spot whose bow lies inside the 5×5 square around that segment. It never
+  lands on another creature, a decoy, an iceberg or water the enemy has already ruled out.
+- **The enemy has to search again**: its misses in that 5×5 square, and every hit it had on the restored creature, are
+  wiped, along with its scan results there. Its hits on other creatures stay.
+- Nothing about the new spot is sent to the enemy; the record only carries the square and the segment you picked.
+- **Link previews**: a cleaner cartoon whale on every card (proper raised tail, flipper, pale belly, a spout from the
+  blowhole, containers on its back).
+
 ## 0.18.1 — 2026-11-04
 
 **Smoother turns: no more flashing between your ocean and theirs.** Client-only; the server, saved matches and their

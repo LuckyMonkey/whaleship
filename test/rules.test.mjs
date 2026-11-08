@@ -228,7 +228,7 @@ test('state transfer: a game in progress survives a server update + schema migra
   await stop(srvA);                                                    // SIGTERM flushes pending saves
   // rewrite the save as the previous release would have written it (schema v3, no pace field)
   const f = path.join(dir, 'matches', created.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8'));
-  assert.equal(saved.v, 4); assert.equal(saved.pace, 1); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
+  assert.equal(saved.v, 4); assert.equal(saved.pace, 2); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
   // a file from a FUTURE schema (e.g. after a rollback) must be left alone, byte for byte
   const fut = path.join(dir, 'matches', 'f'.repeat(32) + '.json'), futBody = JSON.stringify({ ...saved, id: 'f'.repeat(32), v: 99 }); writeFileSync(fut, futBody);
   const check = JSON.parse(execFileSync(process.execPath, ['server.js', '--check-data', path.join(dir, 'matches')], { cwd: path.resolve(import.meta.dirname, '..'), env: { ...process.env, DATA_DIR: mkdtempSync(path.join(tmpdir(), 'ws-chk-')) } }).toString());
@@ -270,4 +270,52 @@ test('link previews: dynamic PNG cards per match for invites, battles and result
   for (const q of ['', '?j=nope', `?j=${Buffer.from('0'.repeat(32), 'hex').toString('base64url')}`]) { const d = await og(q); assert.match(d.title, /Sink their stack/); assert.match(d.image, /\/og\/default\.jpg/); }
   await png(`http://x/whaleship/og/default.jpg`);
   host.close(); guest.close(); solo.close();
+});
+
+test('restore (pace 2): the damaged creature comes back whole somewhere in the 5×5 square, the enemy forgets that water; old games keep the old repair', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ws-restore-')), port = PORT + 2;
+  let srv1 = await bootServer(dir, port);
+  const a = clientAt(port); await a.open;
+  const made = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'warfare', size: 36, name: 't' });
+  await a.act('RANDOMIZE_FLEET'); await a.act('READY'); await new Promise(r => setTimeout(r, 400)); a.close(); await stop(srv1);
+  const f = path.join(dir, 'matches', made.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8')), W = 18;
+  assert.equal(saved.pace, 2, 'new matches are pace 2');
+  const me = saved.seats[0], ship = me.ships.find(sh => sh.cells.length >= 3 && saved.fleet[sh.id].kind !== 2) || me.ships.find(sh => sh.cells.length >= 3);
+  const pick = ship.cells[1], px = pick % W, py = Math.floor(pick / W), inSq = c => Math.abs(c % W - px) <= 2 && Math.abs(Math.floor(c / W) - py) <= 2;
+  me.board[pick] = 2;                                                         // the enemy hit it once
+  const allShip = new Set(me.ships.flatMap(sh => sh.cells)), misses = [];
+  for (let c = 0; c < W * W; c++) if (inSq(c) && me.board[c] === 0 && !allShip.has(c) && misses.length < 3) { me.board[c] = 1; misses.push(c); }
+  const other = me.ships.find(sh => sh !== ship && sh.cells.some(inSq)), otherHit = other ? other.cells.find(inSq) : null;
+  if (otherHit != null) me.board[otherHit] = 2;                               // a hit on ANOTHER creature in the square: must survive
+  me.charges.restore = 1; me.cool.restore = 0;
+  writeFileSync(f, JSON.stringify(saved));
+  // the same game, but started before the update (pace 1): restore keeps repairing one segment in place
+  const oldId = 'a'.repeat(32), oldBody = { ...JSON.parse(JSON.stringify(saved)), id: oldId, pace: 1 }; oldBody.seats[0].credHash = saved.seats[0].credHash;
+  writeFileSync(path.join(dir, 'matches', oldId + '.json'), JSON.stringify(oldBody));
+
+  let srv2 = await bootServer(dir, port);
+  const b = clientAt(port); await b.open;
+  const settle = () => new Promise(r => setTimeout(r, 300));                  // a resume is followed by a PRESENCE broadcast
+  try {
+  await b.send({ type: 'RESUME_MATCH', session: made.state.id, credential: made.credential }); await settle();
+  const res = await b.act('POWER', { power: 'restore', cell: pick }); assert.ok(!res.error, res.error); await settle();
+  const st = b.st, moved = st.me.ships.find(sh => sh.id === ship.id);
+  assert.notDeepEqual(moved.cells, ship.cells, 'it moved');
+  assert.ok(inSq(moved.cells[0]), 'bow inside the 5×5 square around the picked segment');
+  const rest = new Set(st.me.ships.filter(sh => sh.id !== ship.id).flatMap(sh => sh.cells));
+  for (const c of moved.cells) { assert.ok(!rest.has(c), 'no collision'); assert.equal(st.me.shots[c], 0, 'whole, on unexplored water'); assert.ok(!st.firewalls.includes(c), 'not on an iceberg'); }
+  for (const c of misses) assert.equal(st.me.shots[c], 0, 'the enemy\'s misses in the square are wiped');
+  assert.equal(st.me.shots[pick] === 2 && moved.cells.includes(pick), false, 'the old hit is gone');
+  if (otherHit != null) assert.equal(st.me.shots[otherHit], 2, 'hits on other creatures stay');
+  const rec = st.attacks.find(x => x.power === 'restore');
+  assert.equal(rec.moved, true); assert.equal(rec.cell, pick); assert.ok(rec.area.every(c => inSq(c) || ship.cells.includes(c)), 'the record shows only the square');
+  assert.ok(!('cells' in rec) && !JSON.stringify(rec).includes(JSON.stringify(moved.cells)), 'the new spot is never in the record');
+  const o = clientAt(port); await o.open;
+  await o.send({ type: 'RESUME_MATCH', session: oldId, credential: made.credential }); await settle();
+  const old = await o.act('POWER', { power: 'restore', cell: pick }); assert.ok(!old.error, old.error); await settle();
+  assert.deepEqual(o.st.me.ships.find(sh => sh.id === ship.id).cells, ship.cells, 'old game: stays put');
+  assert.equal(o.st.me.shots[pick], 0, 'old game: that one segment repaired');
+  for (const c of misses) assert.equal(o.st.me.shots[c], 1, 'old game: nothing else forgotten');
+  o.close();
+  } finally { b.close(); await stop(srv2); rmSync(dir, { recursive: true, force: true }); }
 });
