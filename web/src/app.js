@@ -73,7 +73,7 @@ const autoFleet = new Set(), autoReadied = new Set(), printedFleet = new Set();
 let cmdHistory = [], drag = null, suppressClick = false;
 let zoom = {z: 1, x: 0, y: 0};
 let R3 = null;   // the Three.js world when WebGL2 is available (otherwise the 2D board below is used)
-let hover = -1, kb = -1, area = [], previewCells = null;
+let hover = -1, kb = -1, area = [], previewCells = null, kbUsed = false;   // kbUsed: the arrow-key cursor is being steered
 const stats = {sent: 0};
 
 /* ---------------- fleet + coordinates ---------------- */
@@ -224,16 +224,22 @@ function adaptTrio(st) {
   if (st.players !== 3) return st;
   const rivals = [0, 1, 2].filter(i => i !== st.seat), ok = i => st.captains[i] && !st.captains[i].empty;
   if (!rivals.includes(aimSeat) || !ok(aimSeat) || (st.captains[aimSeat].out != null && rivals.some(i => ok(i) && st.captains[i].out == null))) aimSeat = rivals.find(i => ok(i) && st.captains[i].out == null) ?? rivals.find(ok) ?? rivals[0];
-  const c = st.captains[aimSeat] || {};
-  st.opponent = !ok(aimSeat) ? null : {name: c.name, ready: c.ready, shots: c.shots, sunk: c.sunk || [], manifest: {}, sonar: [], roles: {}, out: c.out};
+  st.opponent = oppOf(st, aimSeat);
   st.turn = st.phase === 'playing' && st.me.out == null && !st.me.fired ? st.seat : -1;
   st.disconnect_seconds = st.captains.map(x => x?.disconnect_seconds || 0);
   return st;
 }
+function oppOf(st, i) { const c = st.captains[i]; return !c || c.empty ? null : {name: c.name, ready: c.ready, shots: c.shots, sunk: c.sunk || [], manifest: {}, sonar: [], roles: {}, out: c.out}; }
+// paint / list another rival as if aiming at them, then put everything back
+function withAim(seat, fn) {
+  if (!state?.captains || seat == null) return fn();   // the layout can switch a moment before the 3-captain state arrives
+  const keep = {aimSeat, opp: state.opponent}; aimSeat = seat; state.opponent = oppOf(state, seat);
+  try { return fn(); } finally { aimSeat = keep.aimSeat; state.opponent = keep.opp; }
+}
 function setAim(seat, quiet = false) {
   if (!trioOn() || seat === state.seat || !state.captains[seat] || state.captains[seat].empty) return;
   if (targets.size || volley.has(aimSeat)) volley.set(aimSeat, new Set(targets));
-  aimSeat = seat; adaptTrio(state); targets.clear(); for (const c of volley.get(seat) || []) targets.add(c); sel = -1;
+  aimSeat = seat; adaptTrio(state); targets.clear(); for (const c of volley.get(seat) || []) targets.add(c); sel = -1; R3?.setActive(actKey());
   if (!quiet) { audio.sound('select'); render(); }
 }
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
@@ -245,7 +251,7 @@ function onState(msg) {
   if (state?.id === incoming.id && incoming.revision < state.revision && !incoming.replay) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
-  if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
+  if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10, incoming.players === 3 ? 3 : 2); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
   else for (const a of incoming.attacks.slice(seen)) {
     const mine = a.seat === incoming.seat;
     if (a.showdown) continue;
@@ -423,7 +429,10 @@ function renderGameList() {
   $('#notify-wrap').hidden = !('Notification' in window) || Notification.permission !== 'default';
   paintAccount();
 }
-function paintSizes() { document.querySelectorAll('[data-size]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === chosenSize))); }
+function paintSizes() {
+  document.querySelectorAll('[data-size]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === chosenSize)));
+  const quick = chosenSize === 9; document.querySelectorAll('.trio-grid').forEach(e => e.hidden = !quick); const n = $('#trio-full'); if (n) n.hidden = quick;   // 3 captains is a quick game only
+}
 function openNewGame() { renderGameList(); paintSizes(); $('#new-dialog').showModal(); pollGames(); }
 let qrLoaded = null;
 function loadQr() { return qrLoaded ??= new Promise((ok, no) => { const s = document.createElement('script'); s.src = './src/vendor/qrcode.min.js'; s.onload = ok; s.onerror = no; document.head.append(s); }); }
@@ -501,10 +510,17 @@ function cellFromClient(cx, cy) {
 }
 
 /* ---------------- board: the plane canvas ---------------- */
-const plane = {ctx: null, w: 0, k: 1}, planes = {home: {}, target: {}};
-function setSize(n) {
-  if (n === SIZE && planeLife) return;
-  SIZE = n; [N, HT] = dims(n); sel = -1; const b = $('#board');
+const plane = {ctx: null, w: 0, k: 1}, planes = {};
+// 3 captains on the 3D ocean: your board ('home') and each rival's ('ra' = the lower seat, 'rb' = the higher)
+const rivals = () => [0, 1, 2].filter(i => i !== state?.seat);
+const rk = seat => seat === state?.seat ? 'home' : layout === 3 ? (seat === rivals()[0] ? 'ra' : 'rb') : 'target';
+const seatOfKey = k => k === 'ra' ? rivals()[0] : k === 'rb' ? rivals()[1] : null;
+const actKey = () => view === 'home' ? 'home' : layout === 3 ? rk(aimSeat) : 'target';   // the board taps and effects land on
+const camKey = () => view === 'home' ? 'home' : layout === 3 ? 'rivals' : 'target';       // what the camera frames
+let layout = 2;   // boards on the 3D ocean: 2 (home + target) or 3 (home + both rivals)
+function setSize(n, players = 2) {
+  if (n === SIZE && planeLife && players === layout) return;
+  layout = players; SIZE = n; [N, HT] = dims(n); sel = -1; const b = $('#board');
   $('.iso').style.setProperty('--n', N); $('.iso').style.setProperty('--ar', HT / N); $('.iso').classList.toggle('sectors', SECT());
   b.style.gridTemplateColumns = `repeat(${N},minmax(0,1fr))`; b.style.gridTemplateRows = `repeat(${HT},minmax(0,1fr))`; b.style.aspectRatio = `${N} / ${HT}`; b.dataset.n = N;
   planeLife = true; clearShips();
@@ -516,8 +532,10 @@ function setSize(n) {
   kb = -1; hover = -1; plane.w = 0; planeSig = '';
   if (R3) {   // one ocean (v0.21): both boards are painted and float side by side; the camera swings between them
     const px = Math.min(96, Math.floor(1536 / Math.max(N, HT)));
-    for (const v of ['home', 'target']) { const cv = planes[v].cv ||= document.createElement('canvas'); cv.width = N * px; cv.height = HT * px; planes[v].ctx = cv.getContext('2d'); planes[v].sig = ''; }
-    plane.w = N * px; plane.k = 1; plane.ctx = planes[view].ctx; R3.setBoard(N, HT, {home: planes.home.cv, target: planes.target.cv}); R3.focus(view, 0); layout3D(); drawPlane(); return;
+    const keys = layout === 3 ? ['home', 'ra', 'rb'] : ['home', 'target'];
+    for (const v of keys) { const pl = planes[v] ||= {}; const cv = pl.cv ||= document.createElement('canvas'); cv.width = N * px; cv.height = HT * px; pl.ctx = cv.getContext('2d'); pl.sig = ''; }
+    plane.w = N * px; plane.k = 1; plane.ctx = planes[keys[1]].ctx;
+    R3.setBoard(N, HT, Object.fromEntries(keys.map(k => [k, planes[k].cv])), layout === 3 ? {rivals: ['ra', 'rb']} : null); R3.focus(camKey(), 0, actKey()); layout3D(); drawPlane(); return;
   }
   sizePlane();
 }
@@ -533,16 +551,24 @@ function shotsFor(v) { const src = v === 'home' ? state?.me.shots : state?.oppon
 let planeSig = '';
 function drawPlane() {
   if (!R3) { drawPlane2(); return; }
-  const other = view === 'home' ? 'target' : 'home', base = [state?.id, state?.revision, hidden.home.size, hidden.target.size, hiddenSunk.size, shownSonar, aimSeat, N];
-  const sig = [view, ...base, sel, kb, armed, rotN, [...targets], [...locked], area, previewCells?.cells, previewCells?.ok, SECT() ? '' : hover].join('|');
-  if (sig !== planes[view].sig) { planes[view].sig = sig; plane.ctx = planes[view].ctx; drawPlane2(); R3.boardDirty(view); }
-  const sig2 = [other, ...base].join('|');
-  if (sig2 !== planes[other].sig) {   // the board out of focus: its marks and fleet, none of the aiming overlays
-    planes[other].sig = sig2; const keep = {view, hover, kb, area, previewCells, sel}, lk = [...locked], tg = [...targets];
-    view = other; hover = -1; kb = -1; area = []; previewCells = null; sel = -1; locked.clear(); targets.clear(); plane.ctx = planes[other].ctx;
-    try { drawPlane2(); } finally { ({view, hover, kb, area, previewCells, sel} = keep); lk.forEach(c => locked.add(c)); tg.forEach(c => targets.add(c)); plane.ctx = planes[view].ctx; }
-    R3.boardDirty(other);
+  const act = actKey(), hs = k => k === 'home' ? hidden.home.size : layout === 3 ? hk('t' + seatOfKey(k)).size : hidden.target.size;
+  const base = [state?.id, state?.seat, state?.revision, hiddenSunk.size, shownSonar, N, myTurn()];
+  for (const k of Object.keys(planes)) {
+    if (!planes[k].ctx || (layout === 3) !== (k === 'ra' || k === 'rb' || k === 'home')) continue;
+    const queued = layout === 3 && k !== act && k !== 'home' ? [...(volley.get(seatOfKey(k)) || [])] : [];
+    const sig = k === act ? [k, ...base, hs(k), aimSeat, sel, kb, armed, rotN, [...targets], [...locked], area, previewCells?.cells, previewCells?.ok, SECT() ? '' : hover].join('|') : [k, ...base, hs(k), queued].join('|');
+    if (sig === planes[k].sig) continue; planes[k].sig = sig;
+    const paint = () => { plane.ctx = planes[k].ctx; drawPlane2(); };
+    if (k === act) paint();
+    else {   // a board out of focus: its marks and fleet (and, for a rival, the shots you've queued at them), no aiming overlays
+      const keep = {view, hover, kb, area, previewCells, sel}, lk = [...locked], tg = [...targets];
+      view = k === 'home' ? 'home' : 'target'; hover = -1; kb = -1; area = []; previewCells = null; sel = -1; locked.clear(); targets.clear(); queued.forEach(c => targets.add(c));
+      try { if (layout === 3 && k !== 'home') withAim(seatOfKey(k), paint); else paint(); }
+      finally { ({view, hover, kb, area, previewCells, sel} = keep); lk.forEach(c => locked.add(c)); targets.clear(); tg.forEach(c => targets.add(c)); }
+    }
+    R3.boardDirty(k);
   }
+  plane.ctx = planes[act]?.ctx || plane.ctx;
 }
 function drawPlane2() {
   const c = plane.ctx; if (!c || !N) return;
@@ -642,19 +668,23 @@ const shipCache = new Map();   // key → signature, so a card is only touched w
 function clearShips() { shipCache.clear(); $('#board').querySelectorAll('.ship').forEach(e => e.remove()); }
 function render3D() {
   const items = [];
-  for (const v of ['home', 'target']) {
+  const boardsNow = layout === 3 && state ? [['home', null], ['ra', rivals()[0]], ['rb', rivals()[1]]] : [['home', null], ['target', null]];
+  for (const [bk, rs] of boardsNow) {
+    const v = bk === 'home' ? 'home' : 'target', gather = fn => rs == null ? fn() : withAim(rs, fn);
+    gather(() => {
     const shots = shotsFor(v);
     if (state) {
       const list = v === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}));
-      const tag = v === 'target' && trioOn() ? 't' + aimSeat : v;
+      const tag = rs != null ? 't' + rs : v;
       for (const s of list) {
         const cells = [...s.cells].sort((a, b) => a - b), f = F(s.id), hits = cells.map((c, j) => (shots[c] || 0) >= 2 ? j : -1).filter(j => j >= 0);
         const mf = (s.own ? state.me.manifest : state.opponent?.manifest)?.[s.id] || [];
-        items.push({key: `${tag}:${s.id}`, board: v, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
+        items.push({key: `${tag}:${s.id}`, board: bk, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
       }
-      (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${v}:${cell}`, board: v, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
+      (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${bk}:${cell}`, board: bk, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
     }
-    const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells, v);
+    const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells, bk);
+    });
   }
   R3.syncCreatures(items);
 }
@@ -713,13 +743,22 @@ function renderBoard() {
 /* ---------------- board: input ---------------- */
 function buildBoardEvents() {
   const b = R3 ? R3.canvas : $('#board');
-  b.addEventListener('pointerdown', e => { lastPointer = e.pointerType; }, {capture: true});
+  b.addEventListener('pointerdown', e => { lastPointer = e.pointerType; kbUsed = false; }, {capture: true});
   b.addEventListener('click', e => { if (suppressClick) { suppressClick = false; return; }
-    if (R3 && !sliding) { const hit = R3.pickAny(e.clientX, e.clientY); if (hit && hit.key !== view && !(deploying() && !state?.me.ready)) { slideTo(hit.key); return; } }
+    if (R3 && !sliding) { const hit = R3.pickAny(e.clientX, e.clientY);
+      if (hit && layout === 3 && state && (hit.key === 'ra' || hit.key === 'rb')) {   // 3 captains: tap either rival's map
+        const seat = seatOfKey(hit.key); if (view !== 'target') { if (seat !== aimSeat) setAim(seat, true); slideTo('target'); return; }
+        if (seat !== aimSeat && state.captains[seat]?.out == null) setAim(seat); if (seat === aimSeat) tileTap(hit.cell); return; }
+      if (hit && rk(state?.seat) === 'home' && hit.key !== actKey() && (hit.key === 'home') !== (view === 'home') && !(deploying() && !state?.me.ready)) { slideTo(hit.key === 'home' ? 'home' : 'target'); return; } }
     if (R3 && state && view === 'home' && !armed && !(deploying() && !state.me.ready)) { const pc = R3.pickContainer(e.clientX, e.clientY); if (pc) { inspect(pc); return; } }
     const c = cellFromClient(e.clientX, e.clientY); if (c >= 0) tileTap(c); });
   b.addEventListener('keydown', e => {
-    if (!N) return; if (kb < 0) kb = Math.floor(HT / 2) * N + Math.floor(N / 2);
+    if (!N) return;
+    // Space / Enter: transmit (the page's handler) unless you've been steering the arrow-key cursor - it used to tap the
+    // board's centre (E5 on the quick map) as well, so a volley was followed by "E5 is already probed"
+    if ((e.key === 'Enter' || e.key === ' ') && (!kbUsed || kb < 0 || (targets.size && myTurn() && targets.size >= salvo() - volleyOthers()))) return;
+    if (kb < 0) kb = Math.floor(HT / 2) * N + Math.floor(N / 2);
+    if (e.key.startsWith('Arrow')) kbUsed = true;
     const x = kb % N, y = Math.floor(kb / N); let n = kb;
     if (e.key === 'ArrowRight') n = y * N + Math.min(N - 1, x + 1); else if (e.key === 'ArrowLeft') n = y * N + Math.max(0, x - 1);
     else if (e.key === 'ArrowDown') n = Math.min(HT - 1, y + 1) * N + x; else if (e.key === 'ArrowUp') n = Math.max(0, y - 1) * N + x;
@@ -781,7 +820,8 @@ function preview(c) {
 // Fit the board into the free part of the screen (left of the side console on desktop, above the console on phones).
 function layout3D() {
   if (!R3) return; const side = matchMedia('(min-width:900px) and (min-aspect-ratio:1/1)').matches, dock = $('#dock');
-  R3.setInsets({top: 74, left: 0, right: side ? dock.offsetWidth + 24 : 0, bottom: side ? 10 : dock.offsetHeight + 4});
+  const cap = $('#captains'), capBottom = cap && !cap.hidden ? cap.getBoundingClientRect().bottom - $('#sea').getBoundingClientRect().top + 6 : 0;   // 3 captains: frame the boards below the captain bubbles
+  R3.setInsets({top: Math.max(74, capBottom), left: 0, right: side ? dock.offsetWidth + 24 : 0, bottom: side ? 10 : dock.offsetHeight + 4});
 }
 
 /* ---------------- taps ---------------- */
@@ -864,7 +904,7 @@ function fireVolley() {
 }
 
 /* ---------------- zoom + pan: starts with ~80% of the board on screen; drag to look around ---------------- */
-const baseZoom = () => SIZE === 9 ? (touchLayout() ? 1.3 : 1.05) : SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
+const baseZoom = () => layout === 3 && R3 ? 1 : SIZE === 9 ? (touchLayout() ? 1.3 : 1.05) : SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
 let planeResize = 0;
 function applyZoom(glide = false) {
   const w = $('#zoom'); if (!w) return;
@@ -917,7 +957,7 @@ async function slideTo(v, dir, msOverride = null) {
   if (R3) {   // one ocean: both boards are always there; the camera swings across the channel to the other one
     sliding = true; const ms = msOverride ?? (settings.fast ? 420 : 760); view = v; render();
     if (Math.random() < .3) audio.sound('gull');
-    await Promise.race([R3.focus(v, ms), sleep(ms + 400)]); sliding = false; render(); return;
+    await Promise.race([R3.focus(camKey(), ms, actKey()), sleep(ms + 400)]); sliding = false; render(); return;
   }
   // one smooth move: a short slide that fades fully out, the swap while nothing shows, then a gentle slide in (no overshoot)
   sliding = true; const ms = settings.fast ? 140 : 230, out = dir === 'left' ? -1 : 1;
@@ -1128,8 +1168,9 @@ async function playNext() {
     await sleep(fast ? 300 : 700);
   } else {
     // one ocean: the camera starts on the fleet that fires and swings across the channel with its packets
-    const cross = !!R3 && !(trioOn() && a.seat !== state.seat && !incoming), T = fast ? 650 : 1000;
-    if (cross) { if (view !== from) await slideTo(from, null, fast ? 240 : 380); }
+    const cross = !!R3, T = fast ? 650 : 1000, fromView = trioOn() ? (a.seat === state.seat ? 'home' : 'target') : from;
+    const fromKey = layout === 3 ? rk(a.seat) : from, toKey = layout === 3 ? rk(a.target) : to;   // which boards the packets fly between
+    if (cross) { if (view !== fromView) await slideTo(fromView, null, fast ? 240 : 380); }
     else if (view !== to) { audio.sound('launch', incoming); await slideTo(to, incoming ? 'right' : 'left'); }
     if (!cross) await ensureVisible(g.map(x => x.cell));
     let swing = null;
@@ -1142,7 +1183,7 @@ async function playNext() {
       audio.sound(i === 0 ? (power === 'depth' ? 'depth' : 'launch') : 'packet', incoming);
       const e = cellPoint(x.cell, geom), s = {x: e.x + (i - (shots.length - 1) / 2) * 24, y: incoming ? -30 : FX.h + 30};
       if (power === 'depth' || power === 'flood') return fxFlood(s, e, T);
-      if (R3 && cross) { const flight = R3.launch(x.cell, x.cell, {color, dur: (T + 500) / 1000, from, to}); if (i === 0) swing = slideTo(to, null, T + 350); return flight; }   // across the channel
+      if (R3 && cross) { const flight = R3.launch(x.cell, x.cell, {color, dur: (T + 500) / 1000, from: fromKey, to: toKey}); if (i === 0 && view !== to) swing = slideTo(to, null, T + 350); return flight; }   // across the channel
       if (R3) return R3.launch(edgeCell(x.cell), x.cell, {color, dur: T / 1000});   // a glowing 3D packet with a light trail
       return fly(s, e, T, {color, glyph: power === 'tail' || power === 'trace' ? '🛰️' : power === 'oom' ? '💀' : power === 'chaos' ? '☸️' : incoming ? '🚀' : '📨', hops: power === 'tail' || power === 'trace', to: `${coord(x.cell)} ${ip(x.cell, !incoming)}`});
     }));
@@ -1739,6 +1780,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) rend
 new ResizeObserver(() => { $('#screen-game').style.setProperty('--hud-h', `${$('#dock').offsetHeight}px`); layout3D(); }).observe($('#dock'));
 new ResizeObserver(() => { sizeFx(); sizeFoam(); applyZoom(); }).observe($('#sea'));
 new ResizeObserver(() => sizePlane()).observe($('#board'));
+new ResizeObserver(() => layout3D()).observe($('#captains'));   // the captain bubbles appearing / wrapping moves the free area
 
 /* ---------------- loading curtain (v0.21): index.html paints it before any CSS or JS; it lifts once the ocean has drawn
    and the harbor has answered (or after a few seconds regardless), so nobody sees a half-built page. ---------------- */
@@ -1753,7 +1795,7 @@ async function init3D() {
     if (!document.createElement('canvas').getContext('webgl2')) return null;
     const {createWorld} = await import('./ocean3d.js?v=__BUILD__');
     const w = createWorld($('#world3d'), {quality: new URLSearchParams(location.search).get('q') || (coarse() ? 'low' : 'medium')});
-    document.body.classList.add('r3d'); w.onSpout = () => audio.sound('blow'); return w;
+    document.body.classList.add('r3d'); w.onSpout = () => audio.sound('blow'); w.onRelayout = () => { for (const k in planes) planes[k].sig = ''; render(); }; return w;
   } catch (e) { console.warn('3D unavailable, using the 2D board', e); return null; }
 }
 paintSound(); setSize(chosenSize); buildBoardEvents(); zoomGestures(); prefs.applyDocument(settings); audio.setLevels(settings); sizeFx(); sizeFoam(); autoZoom(); render();

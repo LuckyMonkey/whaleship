@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.21.1 — 2026-11-08
+
+**3 captains: see both rivals at once.** Client-only; saved games and their rules are unchanged.
+
+- While you aim, the camera frames **both rivals' maps together** on the ocean, staggered rather than in a straight row
+  (side by side on a wide screen, one above the other on a portrait phone). Tap either map to aim at it; the shots
+  you've queued show on both. Your own map sits off to the left, a swing away. The captain bubbles stay on top, on one
+  compact row on phones, and the maps are framed below them.
+- **3 captains is a quick-map game only:** with 🌊 FULL selected, the menu points you to ⚡ QUICK instead.
+- **The cruising ships are back**: one circles each board (they had drifted out of view with the one-ocean layout).
+- **Fix:** pressing Space (or Enter) to transmit after clicking the ocean also "tapped" the centre square, so a volley
+  was followed by "E5 is already probed". Space/Enter now transmits; it only taps a square when you've been moving the
+  arrow-key cursor.
+
 ## 0.21.0 — 2026-11-07
 
 **Replays.** Every finished battle plays back from its move log, with the same animations it had live.

@@ -455,7 +455,7 @@ body.switching #sea { opacity: .15; }
 .pass-curtain{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#04121cf2;color:#e9f8ff;text-align:center}
 .pass-curtain h2{font:400 44px 'Lilita One',system-ui,sans-serif;margin:6px 0 4px;color:var(--yellow)}
 .pass-curtain .small{opacity:.7;margin-bottom:18px}
-@media (max-width:700px){.captains{top:118px}.captains .cap{padding:5px 9px}.captains .cap b{font-size:13px}}
+@media (max-width:700px){.captains{top:118px;flex-wrap:nowrap;max-width:calc(100% - 12px);gap:4px}.captains .cap{padding:4px 8px;min-width:0;flex-shrink:1}.captains .cap b{font-size:12px;max-width:9ch}.captains .cap small{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}}
 
 /* replays (v0.21): a slim player above the dock */
 .replay-bar { position: absolute; left: 50%; top: 120px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 8px;
@@ -468,3 +468,6 @@ body.switching #sea { opacity: .15; }
 .replay-bar input[type=range] { flex: 1; min-width: 60px; accent-color: #7fe3ff; }
 .rp-pos { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 640px) { .replay-bar { top: auto; bottom: 96px; gap: 5px; padding: 5px 7px; } .replay-bar #rp-link { display: none; } }
+
+.trio-grid[hidden], .trio-full[hidden] { display: none; }
+.trio-full { margin: 4px 0 10px; }
