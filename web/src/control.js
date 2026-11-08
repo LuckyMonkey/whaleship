@@ -1,4 +1,4 @@
-import * as prefs from './settings.js';
+import * as prefs from './settings.js?v=__BUILD__';
 const $ = s => document.querySelector(s);
 let settings = prefs.load(), toastTimer;
 function toast(t) { $('#toast').textContent = t; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').hidden = true, 4000); }

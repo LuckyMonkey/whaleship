@@ -912,7 +912,7 @@ function cardText(info) {
 }
 let indexHtml = null;
 function previewPage(req, url) {
-  indexHtml ??= fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
+  indexHtml ??= fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').replaceAll('__BUILD__', BUILD);
   const origin = ORIGINS[0] || `https://${req.headers.host}`, j = url.searchParams.get('j') || '', r = url.searchParams.get('r') || '', key = j || r;
   const m = matchFromShort(key), info = cardInfo(m, !!r), [title, desc] = cardText(info);
   const ver = m ? `${m.phase}.${m.turn_number || 0}.${m.seats[1] ? 2 : 1}` : 'x';
@@ -926,6 +926,15 @@ async function previewImage(res, key) {
   const ck = m ? `${m.id}:${m.phase}:${m.turn_number}:${m.seats.map(s => s?.name).join('|')}` : 'default';
   try { const png = await og.renderCard(ck, info); res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': png.length, 'Cache-Control': 'public, max-age=300' }); res.end(png); }
   catch (e) { if (e.message !== 'busy') console.error('og', e.message); res.writeHead(302, { Location: `${BASE}/img/og.jpg` }); res.end(); }
+}
+// v0.21: pages and modules say ?v=__BUILD__; it's filled in as they're served, so every asset URL carries this build and
+// can be cached for good (immutable), and a deploy never depends on stamps living in the files on disk.
+const stampCache = new Map();
+function stampedBody(file, st) {
+  if (!/\.(html|js)$/.test(file)) return null;
+  const c = stampCache.get(file); if (c && c.m === st.mtimeMs) return c.b;
+  const t = fs.readFileSync(file, 'utf8'), b = t.includes('__BUILD__') ? Buffer.from(t.replaceAll('__BUILD__', BUILD)) : null;
+  stampCache.set(file, { m: st.mtimeMs, b }); return b;
 }
 const server = http.createServer(async (req, res) => {
   try {
@@ -945,8 +954,10 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(WEB + path.sep)) { res.writeHead(403); return res.end(); }
     fs.stat(file, (err, st) => {
       if (err || !st.isFile()) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found'); }
-      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Content-Length': st.size, 'Cache-Control': url.searchParams.get('v') === BUILD && BUILD !== 'dev' ? 'public, max-age=31536000, immutable' : 'no-cache, max-age=0' });
+      let body = null; try { body = stampedBody(file, st); } catch {}
+      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Content-Length': body ? body.length : st.size, 'Cache-Control': url.searchParams.get('v') === BUILD && BUILD !== 'dev' ? 'public, max-age=31536000, immutable' : 'no-cache, max-age=0' });
       if (req.method === 'HEAD') return res.end();
+      if (body) return res.end(body);
       fs.createReadStream(file).pipe(res);
     });
   } catch (e) { console.error('http', e); try { res.writeHead(500); res.end(); } catch {} }

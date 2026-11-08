@@ -9,6 +9,15 @@
 - A slim player: play/pause, a slider to any move, **1×/2×**, 🔗 copy the link, ✕ leave. Keys: space, ← → a turn, Esc.
 - Only **finished** battles replay (a replay shows both fleets). Restores, decoys and 3-captain battles play back too.
 
+**A clean start.** No more dark, tilted half-built ocean (and every button at once) while the page loads.
+
+- A **loading curtain** is painted by the page itself before any stylesheet or script, with a progress line; it lifts
+  once the ocean has drawn and the harbor has answered (never later than a few seconds).
+- **Everything loads at once:** the game's modules and the 3D engine are preloaded in parallel instead of one after
+  another.
+- **Cache stamps are filled in by the server** (`?v=__BUILD__` → this build) on every page and module, so assets are
+  cached for good and a deploy can't serve a mix of versions. Open tabs reload themselves once after a deploy.
+
 ## 0.20.0 — 2026-11-07
 
 **3 captains: a quick game for three.** A new mode; two-player games, and games already in progress, are unchanged.

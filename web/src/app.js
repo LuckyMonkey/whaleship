@@ -1,8 +1,8 @@
 // WHALESHIP client v0.7 — infrastructure battleship. The board is one canvas (no per-cell DOM), creatures are a
 // handful of standing SVG cards, effects run on a single canvas that only animates while something is happening.
-import * as audio from './audio.js';
-import * as prefs from './settings.js';
-import {creatureSVG, bergSVG, slotFor, ROLES} from './creatures.js';
+import * as audio from './audio.js?v=__BUILD__';
+import * as prefs from './settings.js?v=__BUILD__';
+import {creatureSVG, bergSVG, slotFor, ROLES} from './creatures.js?v=__BUILD__';
 
 const BUILD = '__BUILD__';   // stamped at deploy; if the server reports a newer build, this tab reloads itself once
 const GEN = '0.7';           // bump to give every browser a fresh start (old matches stay under ＋)
@@ -190,8 +190,9 @@ function connect() {
   socket.onmessage = e => {
     let msg; try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'CONNECTED') {
-      if (msg.build && msg.build !== 'dev' && BUILD !== '__BUILD__' && msg.build !== BUILD) { const k = 'whaleship:reload:' + msg.build; let first = true; try { first = !sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch {} if (first) { location.reload(); return; } }
+      if (msg.build && msg.build !== 'dev' && BUILD !== 'dev' && !BUILD.startsWith('__') && msg.build !== BUILD) { const k = 'whaleship:reload:' + msg.build; let first = true; try { first = !sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch {} if (first) { location.reload(); return; } }
       const requested = invitation(location.href), rq = new URLSearchParams(location.search).get('r');
+      if (!requested && !rq && !(active && seatKeys[active])) bootDone(); else setTimeout(bootDone, 3000);
       if (rq && fromShort(rq) && !rp.on) startReplay(fromShort(rq));
       else if (requested) { joining = true; join(requested); }
       else if (active && seatKeys[active]) raw({type: 'RESUME_MATCH', session: active, credential: seatKeys[active]});
@@ -201,7 +202,7 @@ function connect() {
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
     if (msg.type === 'DEMO_STATE') { if (demo.on) onState(msg); return; }
-    if (msg.type === 'REPLAY') { if (msg.error) { toast(msg.error); if (/[?&]r=/.test(location.search)) historyReplace(); } else beginReplay(msg.state); return; }
+    if (msg.type === 'REPLAY') { bootDone(); if (msg.error) { toast(msg.error); if (/[?&]r=/.test(location.search)) historyReplace(); } else beginReplay(msg.state); return; }
     if (msg.type === 'LOCAL_SEAT' && msg.state?.id) { (deviceSeats[msg.state.id] ||= {})[msg.seat] = msg.credential; saveDeviceSeats(); toast(`🛋️ Captain ${msg.seat + 1} plays on this device: pass it over when it's their volley.`); }
     if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game removed.'); return; }
     pending = false;
@@ -291,7 +292,7 @@ function onState(msg) {
   const mineNow = myTurn();
   if (mineNow && lastTurnMine === false && !queue.length) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); }
   lastTurnMine = mineNow;
-  rememberMatch(); render(); playNext();
+  rememberMatch(); render(); playNext(); bootDone();
   if (restoring && document.body.classList.contains('switching')) requestAnimationFrame(() => requestAnimationFrame(() => { document.body.classList.remove('switching'); clearTimeout(switchTimer); }));
 }
 
@@ -1667,12 +1668,18 @@ new ResizeObserver(() => { $('#screen-game').style.setProperty('--hud-h', `${$('
 new ResizeObserver(() => { sizeFx(); sizeFoam(); applyZoom(); }).observe($('#sea'));
 new ResizeObserver(() => sizePlane()).observe($('#board'));
 
+/* ---------------- loading curtain (v0.21): index.html paints it before any CSS or JS; it lifts once the ocean has drawn
+   and the harbor has answered (or after a few seconds regardless), so nobody sees a half-built page. ---------------- */
+function boot(pct, msg) { const b = document.getElementById('boot'); if (!b) return; b.querySelector('i').style.width = pct + '%'; if (msg) b.querySelector('.boot-msg').textContent = msg; }
+function bootDone() { const b = document.getElementById('boot'); if (!b || b.classList.contains('done')) return; boot(100); requestAnimationFrame(() => requestAnimationFrame(() => { b.classList.add('done'); setTimeout(() => b.remove(), 600); })); }
+boot(40, '$ docker pull ocean:3d');
 R3 = await init3D();
+boot(70, '$ docker network connect harbor');
 async function init3D() {
   if (/[?&]2d\b/.test(location.search)) return null;
   try {
     if (!document.createElement('canvas').getContext('webgl2')) return null;
-    const {createWorld} = await import('./ocean3d.js');
+    const {createWorld} = await import('./ocean3d.js?v=__BUILD__');
     const w = createWorld($('#world3d'), {quality: new URLSearchParams(location.search).get('q') || (coarse() ? 'low' : 'medium')});
     document.body.classList.add('r3d'); w.onSpout = () => audio.sound('blow'); return w;
   } catch (e) { console.warn('3D unavailable, using the 2D board', e); return null; }
@@ -1680,6 +1687,7 @@ async function init3D() {
 paintSound(); setSize(chosenSize); buildBoardEvents(); zoomGestures(); prefs.applyDocument(settings); audio.setLevels(settings); sizeFx(); sizeFoam(); autoZoom(); render();
 log(`Last login: ${new Date().toString().slice(0, 24)} on ttys001\nWhaleOS (moby) — infrastructure battleship\n\n * Your fleet is a stack: moby=docker host · k8s=orchestrator · walrus=storage · tux=linux host · squid=proxy\n * Fire:  ping q5      Specials:  nmap q5 · hping3 q5 · traceroute q5      How to play: the ? button\n * Type help. Nothing here runs on a real host.\n`);
 setInterval(lifeTick, 850); setInterval(critterTick, 3000); setTimeout(critterTick, 700);
+requestAnimationFrame(() => requestAnimationFrame(() => boot(82))); setTimeout(bootDone, 7000);
 try {
   const r = await fetch('./api/profile'); if (!r.ok) throw Error(); profile = await r.json(); paintAccount();
   try { seatKeys = JSON.parse(localStorage.getItem('whaleship:seats:' + profile.identity) || '{}'); active = localStorage.getItem('whaleship:active:' + profile.identity); } catch {}
@@ -1687,4 +1695,4 @@ try {
   try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('whaleship:seats:') && k !== 'whaleship:seats:' + profile.identity) Object.assign(seatKeys, {...JSON.parse(localStorage.getItem(k) || '{}'), ...seatKeys}); if (!active && k.startsWith('whaleship:active:')) active = localStorage.getItem(k); } } catch {}
   try { if (localStorage.getItem('whaleship:gen') !== GEN) { localStorage.setItem('whaleship:gen', GEN); if (active) toast(`WHALESHIP ${GEN} — fresh start. Your earlier games are under ＋.`); active = null; saveSession(); } } catch {}
   connect();
-} catch { toast('Could not reach the harbor. Reload to try again.'); $('#status').textContent = '○ harbor offline'; }
+} catch { bootDone(); toast('Could not reach the harbor. Reload to try again.'); $('#status').textContent = '○ harbor offline'; }

@@ -1,6 +1,6 @@
 // WHALESHIP 3D world (Three.js, WebGL2). Renderer only: it never decides game results, it visualises them.
 // World convention: X right, Y up, Z depth; ocean surface y = 0; one board cell = 1 world unit, board centred at 0.
-import * as THREE from './vendor/three.module.min.js';
+import * as THREE from './vendor/three.module.min.js?v=__BUILD__';
 
 const QUALITY = {
   low: {dpr: 1, shadows: false, oceanSeg: 56, foam: 96, aa: false, fps: 30},
