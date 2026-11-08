@@ -777,6 +777,19 @@ function demoStep(ws) {
 }
 function demoStop(ws) { if (ws.demo) { ws.demo = null; demoCount--; } }
 
+/* ---------------- replays (v0.21): a finished battle plays back from its move log ----------------
+   Anyone holding the match link can watch it while the match is kept (7 days after it ends). Only finished battles:
+   a replay shows both fleets, which must never leak while a game is still being played. A seat key picks that
+   captain's side; otherwise it's shown from the first captain's side. */
+function replay(ws, msg) {
+  const m = matches.get(String(msg.session || ''));
+  if (!m || m.phase !== 'finished' || m.reason === 'closed' || !m.attacks.length) return send(ws, { type: 'REPLAY', error: 'That battle can’t be replayed: only finished battles, for a week after they end.' });
+  let s = 0; m.seats.forEach((x, i) => { if (credOk(x, msg.credential)) s = i; });
+  const v = view(m, s);
+  v.replay = true; v.fleets = m.seats.map(x => x ? x.ships : []); v.names = m.seats.map(x => x ? x.name : '');
+  send(ws, { type: 'REPLAY', state: v });
+}
+
 /* ---------------- message handling ---------------- */
 function handle(ws, raw) {
   let msg; try { msg = JSON.parse(raw); } catch { return; }
@@ -789,6 +802,7 @@ function handle(ws, raw) {
   if (msg.type === 'MY_MATCHES') return myMatches(ws);
   if (msg.type === 'PUSH_SUBSCRIBE') return pushSubscribe(ws, msg);
   if (msg.type === 'DEMO') return demoStart(ws);
+  if (msg.type === 'REPLAY') return replay(ws, msg);
   if (msg.type === 'DEMO_STEP') return demoStep(ws);
   if (msg.type === 'DEMO_STOP') return demoStop(ws);
   const m = matches.get(ws.matchId);

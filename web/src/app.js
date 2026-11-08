@@ -45,7 +45,7 @@ const rotOff = ([x, y], r) => { for (let i = 0; i < (r & 3); i++) [x, y] = [-y, 
 let rotN = 0, lastPointer = 'mouse';
 const ROLE_FX = {moby: 'FLOOD + OOM KILL offline (Cannot connect to the Docker daemon)', swarm: '−1 ping per turn (orchestrator lost)', walrus: 'RESTORE offline (no backups found)', tux: 'SCAN + TRACEROUTE offline (no diagnostics)', squid: 'proxy down: their scans now see exact positions'};
 const RULE_INFO = {classic: {label: 'CLASSIC', small: 'just pings'}, warfare: {label: 'WARFARE', small: '★ roles + specials'}, chaos: {label: 'CHAOS', small: '+ Kubernetes events'}};
-const CTAS = ['keypad', 'sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend', 'cta-invite', 'cta-shuffle', 'cta-ready', 'cta-fire', 'specials', 'cta-notify', 'cta-forfeit', 'cta-again', 'cta-share'];
+const CTAS = ['cta-replay', 'keypad', 'sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend', 'cta-invite', 'cta-shuffle', 'cta-ready', 'cta-fire', 'specials', 'cta-notify', 'cta-forfeit', 'cta-again', 'cta-share'];
 const DEFAULT_FLEET = [5, 4, 3, 3, 2].map((len, id) => ({id, len, kind: id, name: ['moby-5', 'swarm-4', 'walrus-3', 'tux-3', 'squid-2'][id]}));
 const EXITS = ['exit 137', 'SIGKILL', 'OOMKilled', 'core dumped', 'segfault', 'EOF', 'ECONNRESET', 'panic: nil map'];
 
@@ -63,7 +63,8 @@ const hidden = {home: new Set(), _target: new Set(), get target() { return trioO
 let aimSeat = 1;
 const volley = new Map();                          // 3 captains: seat -> Set(cells) queued this round, across both rivals
 const trioOn = () => state?.players === 3;
-const multi = () => state?.mode === 'multiplayer' || state?.mode === 'trio';
+const multi = () => !spect() && (state?.mode === 'multiplayer' || state?.mode === 'trio');
+const spect = () => !!(state?.demo || state?.replay);   // attract mode or a replay: watched, never played
 let deviceSeats = (() => { try { return JSON.parse(localStorage.getItem('whaleship:device-seats') || '{}'); } catch { return {}; } })();   // matchId -> {seat: credential}: captains playing on this device
 const saveDeviceSeats = () => { try { localStorage.setItem('whaleship:device-seats', JSON.stringify(deviceSeats)); } catch {} };
 let lastWinner = null, joining = false, justCreated = false, lastTurnMine = null;
@@ -178,7 +179,7 @@ function join(id) { if (!/^[a-f0-9]{32}$/.test(id || '')) { toast('That invitati
 function historyReplace() { H.replaceState(null, '', location.pathname); }
 const gameUrl = () => profile.inviteBase || (location.origin + location.pathname.replace(/[^/]*$/, ''));   // configurable via INVITE_BASE
 const inviteUrl = id => `${gameUrl()}?j=${toShort(id)}`;
-function syncUrl() { if (multi() && state.phase !== 'finished') { const q = '?j=' + toShort(state.id); if (location.search !== q || location.hash) H.replaceState(null, '', location.pathname + q); } else if (/(join|j)=/.test(location.search + location.hash)) historyReplace(); }
+function syncUrl() { if (state?.replay) { const q = '?r=' + toShort(state.id); if (location.search !== q) H.replaceState(null, '', location.pathname + q); return; } if (multi() && state.phase !== 'finished') { const q = '?j=' + toShort(state.id); if (location.search !== q || location.hash) H.replaceState(null, '', location.pathname + q); } else if (/(join|j)=/.test(location.search + location.hash)) historyReplace(); }
 function showMenu() { state = null; active = null; queue = []; hidden.home.clear(); hidden.target.clear(); hiddenSunk.clear(); held = null; armed = null; targets.clear(); view = 'target'; saveSession(); syncUrl(); setSize(chosenSize); autoZoom(); render(); }
 
 function connect() {
@@ -190,8 +191,9 @@ function connect() {
     let msg; try { msg = JSON.parse(e.data); } catch { return; }
     if (msg.type === 'CONNECTED') {
       if (msg.build && msg.build !== 'dev' && BUILD !== '__BUILD__' && msg.build !== BUILD) { const k = 'whaleship:reload:' + msg.build; let first = true; try { first = !sessionStorage.getItem(k); sessionStorage.setItem(k, '1'); } catch {} if (first) { location.reload(); return; } }
-      const requested = invitation(location.href);
-      if (requested) { joining = true; join(requested); }
+      const requested = invitation(location.href), rq = new URLSearchParams(location.search).get('r');
+      if (rq && fromShort(rq) && !rp.on) startReplay(fromShort(rq));
+      else if (requested) { joining = true; join(requested); }
       else if (active && seatKeys[active]) raw({type: 'RESUME_MATCH', session: active, credential: seatKeys[active]});
       return;
     }
@@ -199,6 +201,7 @@ function connect() {
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
     if (msg.type === 'DEMO_STATE') { if (demo.on) onState(msg); return; }
+    if (msg.type === 'REPLAY') { if (msg.error) { toast(msg.error); if (/[?&]r=/.test(location.search)) historyReplace(); } else beginReplay(msg.state); return; }
     if (msg.type === 'LOCAL_SEAT' && msg.state?.id) { (deviceSeats[msg.state.id] ||= {})[msg.seat] = msg.credential; saveDeviceSeats(); toast(`🛋️ Captain ${msg.seat + 1} plays on this device: pass it over when it's their volley.`); }
     if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game removed.'); return; }
     pending = false;
@@ -233,9 +236,10 @@ function setAim(seat, quiet = false) {
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
 function onState(msg) {
   const incoming = adaptTrio(msg.state);
-  if (incoming.demo) incoming.turn = -1;
+  if (incoming.demo || incoming.replay) incoming.turn = -1;
   if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
-  if (state?.id === incoming.id && incoming.revision < state.revision) return;
+  if (rp.on && state?.replay && !incoming.replay) return;                  // a live update for the battle being replayed waits
+  if (state?.id === incoming.id && incoming.revision < state.revision && !incoming.replay) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
   if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
@@ -249,7 +253,7 @@ function onState(msg) {
   seen = incoming.attacks.length;
   const evs = incoming.events || [];
   if (restoring) seenEvents = evs.length; const fresh = evs.slice(Math.min(seenEvents, evs.length)); seenEvents = evs.length;
-  state = incoming; if (!state.demo) active = state.id;
+  state = incoming; if (!spect()) active = state.id;
   if (fresh.length) setTimeout(() => fresh.forEach(showEvent), queue.length ? 900 : 0);
   if (msg.credential) { seatKeys[active] = msg.credential; saveSession(); if (trioOn()) { (deviceSeats[active] ||= {})[state.seat] = msg.credential; saveDeviceSeats(); } }
   if (trioOn() && pendingLocal && state.seat === 0 && msg.type === 'MATCH_CREATED') { pendingLocal = false; setTimeout(addLocalCaptain, 200); }
@@ -294,7 +298,7 @@ function onState(msg) {
 /* ---------------- ongoing games ---------------- */
 function matches() { try { return JSON.parse(localStorage.getItem('whaleship:matches') || '{}'); } catch { return {}; } }
 function rememberMatch() {
-  if (deletedGames.has(state.id) || state.demo) return;
+  if (deletedGames.has(state.id) || spect()) return;
   const m = matches();
   m[state.id] = {mode: state.mode, size: state.size, opp: state.opponent?.name || '', mine: myTurn(), phase: state.phase, t: Date.now()};
   try { localStorage.setItem('whaleship:matches', JSON.stringify(Object.fromEntries(Object.entries(m).sort((a, b) => b[1].t - a[1].t).slice(0, 20)))); } catch {}
@@ -1144,13 +1148,14 @@ function critterTick() {
 /* ---------------- banner, HUD, title ---------------- */
 let bannerOverride = null;
 function setTurnBanner(text, kind) {
-  if (state?.demo) { text = text.replace(/^🚨 INCOMING/, `📡 ${oppName()}`).replace(/^📡 PING/, `📡 ${myAi()}`); kind = kind === 'alarm' ? 'theirs' : kind; }   // attract mode: name the CPU firing
+  if (spect() && !trioOn()) { text = text.replace(/^🚨 INCOMING/, `📡 ${oppName()}`).replace(/^📡 PING/, `📡 ${myAi()}`); kind = kind === 'alarm' ? 'theirs' : kind; }   // attract mode: name the CPU firing
   bannerOverride = {text, kind}; paintBanner();
 }
 function paintBanner() {
   let text, kind;
   if (animating && bannerOverride) ({text, kind} = bannerOverride);
   else if (!state) { text = connected ? '🐳 Tap the ocean to play' : '📡 Contacting harbor…'; kind = 'idle'; }
+  else if (state.replay) { text = state.phase === 'finished' ? `🏁 ${replayWinner()} · ▶ replay over` : `▶ REPLAY · ${replayNames()}`; kind = 'idle'; }
   else if (state.demo) { text = state.phase === 'finished' ? `🏁 ${state.winner == null ? 'Truce' : (state.winner === state.seat ? myAi() : oppName()) + ' wins'} · tap to play` : '🎬 CPU vs CPU · tap anywhere to play'; kind = 'idle'; }
   else if (deploying()) {
     if (!state.me.ready) { text = settings.manual ? '⚓ Arrange your stack' : '⚓ Deploying your stack…'; kind = 'deploy'; }
@@ -1165,10 +1170,12 @@ function paintBanner() {
 function showCtas(ids, pulse) { for (const id of CTAS) { const e = $('#' + id); if (!e) continue; e.hidden = !ids.includes(id); e.classList.toggle('cta', id === pulse); } }
 function renderHud() {
   $('#views').hidden = !state || !!state.demo;
+  paintReplay();
   for (const [id, v] of [['#view-target', 'target'], ['#view-home', 'home']]) { $(id).setAttribute('aria-selected', String(view === v)); $(id).disabled = animating; }
   const canNotify = 'Notification' in window && Notification.permission === 'default';
   let hint = '', ids = [], pulse = null;
-  if (state?.demo) { hint = `attract mode · ${myAi()} vs ${oppName()} · tap anywhere to take the helm`; }
+  if (state?.replay) { hint = `replay · ${replayPos()} · space pause · ← → turn · esc leave`; }
+  else if (state?.demo) { hint = `attract mode · ${myAi()} vs ${oppName()} · tap anywhere to take the helm`; }
   else if (!state) { hint = chosenSize === 9 ? `quick game · 9 sectors A–I · type E5 · ${RULE_INFO[chosenRules].label.toLowerCase()}` : `sink their infrastructure · 36 sectors · type Q5 or 35 · ${RULE_INFO[chosenRules].label.toLowerCase()}`; ids = ['sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend']; pulse = 'cta-solo'; paintSizes(); }
   else if (deploying()) {
     const waitingFriend = state.mode === 'multiplayer' && !state.opponent;
@@ -1189,7 +1196,7 @@ function renderHud() {
       $('#cta-fire').disabled = !targets.size;
     } else { hint = state.mode === 'multiplayer' ? `${oppName()} is aiming · no time limit — come back anytime` : '🤖 the AI is aiming…'; if (canNotify && state.mode === 'multiplayer') ids = ['cta-notify']; }
     if (claim && !animating) ids.push('cta-forfeit');
-  } else { hint = state.winner === state.seat ? 'deployment successful · again?' : 'this incident has been logged · rematch?'; ids = ['cta-again', 'cta-share']; pulse = 'cta-again'; }
+  } else { hint = state.winner === state.seat ? 'deployment successful · again?' : 'this incident has been logged · rematch?'; ids = state.replay ? [] : ['cta-again', 'cta-replay', 'cta-share']; pulse = state.replay ? null : 'cta-again'; }
   $('#hint').textContent = hint ? '❯ ' + hint : ''; showCtas(ids, pulse); renderKeypad(ids.includes('keypad'));
   $('#fire-label').textContent = SECT() ? `📡 TRANSMIT ${targets.size}/${salvo()}${touchLayout() ? '' : ' ⏎'}` : salvo() > 1 ? `📡 PING ${targets.size}/${salvo()}` : '📡 PING';
   $('#fire-cmd').textContent = `$ ping ${[...targets].map(c => lc(c)).join(' ') || '—'}`;
@@ -1197,8 +1204,8 @@ function renderHud() {
   document.querySelectorAll('[data-rules]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rules === chosenRules)));
   $('#cta-ready').disabled = !state || state.me.ships.length !== FLEET.length || state.me.ready || !connected;
   $('#cta-shuffle').disabled = !state || state.me.ready || !connected;
-  document.body.dataset.phase = !state ? 'menu' : state.demo ? 'demo' : state.phase;
-  $('#end-btn').hidden = !state || state.demo || state.phase === 'finished';
+  document.body.dataset.phase = !state ? 'menu' : state.demo ? 'demo' : state.replay ? 'replay' : state.phase;
+  $('#end-btn').hidden = !state || spect() || state.phase === 'finished';
 }
 function specList() {
   if (!state) return [];
@@ -1361,7 +1368,7 @@ function renderWatch() {
 let resultShownFor = null;
 function renderResult() {
   const o = $('#result-overlay');
-  if (state?.phase !== 'finished' || state.demo || animating || queue.length) { o.hidden = true; return; }
+  if (state?.phase !== 'finished' || spect() || animating || queue.length) { o.hidden = true; return; }
   if (resultShownFor === state.id) return;
   resultShownFor = state.id;
   const won = state.winner === state.seat, mine = state.attacks.filter(a => a.seat === state.seat && !a.reveal), theirs = state.attacks.filter(a => a.seat !== state.seat && !a.reveal);
@@ -1501,6 +1508,80 @@ setInterval(() => {
   }
   if (!state && connected && !pending && !document.hidden && !document.querySelector('dialog[open]') && $('#result-overlay').hidden && t - lastInput > IDLE_MS) startDemo();
 }, 500);
+
+/* ---------------- replays (v0.21): a finished battle plays back from its move log ----------------
+   The server sends the finished match once (both fleets + every move); each frame is rebuilt here from the first k
+   moves and fed through onState, so playback uses exactly the animations the battle had live. ?r=<id> links open it. */
+const rp = {on: false, full: null, k: 0, paused: false, fast: false, seek: null, back: null, wasFast: false, t: 0};
+function startReplay(id) { if (!/^[a-f0-9]{32}$/.test(id || '')) return; $('#result-overlay').hidden = true; raw({type: 'REPLAY', session: id, credential: seatKeys[id] || ''}); }
+function beginReplay(F) {
+  if (demo.on) stopDemo();
+  rp.back = state && !spect() && state.id === F.id ? F.id : rp.on ? rp.back : null;
+  rp.on = true; rp.full = F; rp.paused = false; rp.wasFast = settings.fast; rp.t = 0;
+  frame(0, true); log(`$ docker compose logs --follow --since=0 ${toShort(F.id).slice(0, 8).toLowerCase()}   # replay: ${F.attacks.length} moves`, 'event');
+}
+function frameState(k) {
+  const F = rp.full, st = structuredClone(F), n = F.players === 3 ? 3 : 2, T = F.w * F.h, fleets = F.fleets;
+  const boards = Array.from({length: n}, () => { const b = new Array(T).fill(0); for (const c of F.firewalls || []) b[c] = 5; return b; }), sunk = Array.from({length: n}, () => []);
+  const owner = (t, c) => fleets[t].some(sh => sh.cells.includes(c));
+  for (const a of F.attacks.slice(0, k)) {
+    if (a.restored) {                       // the restorer's own waters: the enemy's marks in the square are wiped
+      const b = boards[a.seat]; if (!a.moved) { b[a.cell] = 0; continue; }
+      for (const c of a.area || []) if (b[c] === 1 || (b[c] === 2 && !owner(a.seat, c))) b[c] = 0;
+      for (const sh of fleets[a.seat]) if (sh.cells.some(c => (a.area || []).includes(c))) sh.cells.forEach(c => { if (b[c] === 2) b[c] = 0; });
+      continue;
+    }
+    if (a.reveal) continue;
+    const t = a.target ?? 1 - a.seat, b = boards[t];
+    b[a.cell] = a.decoy ? 4 : a.hit ? 2 : 1;
+    if (a.sunk) { const sh = fleets[t].find(x => x.id === a.sunk.id); if (sh) { sh.cells.forEach(c => b[c] = 3); sunk[t].push(sh); } }
+  }
+  const done = k >= F.attacks.length, me = F.seat;
+  Object.assign(st, {attacks: F.attacks.slice(0, k), phase: done ? 'finished' : 'playing', winner: done ? F.winner : null, turn: -1, revision: k + 1,
+    turn_number: k ? F.attacks[k - 1].turn + 1 : 0, events: [], replay: true});
+  st.me.shots = boards[me]; st.me.ships = fleets[me];
+  if (n === 3) st.captains.forEach((c, i) => { if (c.empty) return; c.shots = boards[i]; c.sunk = sunk[i]; c.afloat = fleets[i].length - sunk[i].length; c.fired = false; if (!done && c.out != null && sunk[i].length < fleets[i].length) c.out = null; });
+  else if (st.opponent) { st.opponent.shots = boards[1 - me]; st.opponent.sunk = sunk[1 - me]; }
+  return st;
+}
+function frame(k, jump) { rp.k = k; onState({type: jump ? 'MATCH_RESUMED' : 'STATE', state: frameState(k)}); }
+function nextStop(k) { const A = rp.full.attacks; if (k >= A.length) return k; const a = A[k]; let j = k + 1; while (j < A.length && A[j].turn === a.turn && A[j].seat === a.seat) j++; return j; }
+function prevStop(k) { const A = rp.full.attacks; let j = Math.max(0, k - 1); if (j === 0) return 0; const a = A[j]; while (j > 0 && A[j - 1].turn === a.turn && A[j - 1].seat === a.seat) j--; return j; }
+function leaveReplay() {
+  if (!rp.on) return; rp.on = false; settings.fast = rp.wasFast; queue = []; const back = rp.back;
+  const go = () => { if (!state?.replay) return; if (back && seatKeys[back]) { state = null; join(back); } else { historyReplace(); showMenu(); } };
+  if (!animating) go(); else { const t0 = Date.now(), w = () => { if (!animating || Date.now() - t0 > 4000) { animating = false; go(); } else setTimeout(w, 60); }; w(); }
+}
+const replayNames = () => trioOn() ? state.captains.filter(c => !c.empty).map(c => c.name).join(' · ') : `${myAi()} vs ${oppName()}`;
+function replayWinner() { const F = rp.full; if (!F || F.winner == null || F.winner === 'draw') return 'A draw'; return (F.names?.[F.winner] || 'Captain') + ' wins'; }
+const replayPos = () => { const A = rp.full?.attacks || []; return `move ${rp.k}/${A.length}${rp.paused ? ' · paused' : ''}`; };
+function paintReplay() {
+  const bar = $('#replay-bar'); if (!bar) return; bar.hidden = !state?.replay; if (bar.hidden) return;
+  const A = rp.full.attacks; $('#rp-play').textContent = rp.paused || state.phase === 'finished' ? '▶' : '⏸'; $('#rp-play').setAttribute('aria-label', rp.paused ? 'Play' : 'Pause');
+  const seek = $('#rp-seek'); seek.max = A.length; if (document.activeElement !== seek) seek.value = rp.k;
+  $('#rp-pos').textContent = `${rp.k}/${A.length}`; $('#rp-fast').setAttribute('aria-pressed', String(rp.fast)); $('#rp-fast').textContent = rp.fast ? '2×' : '1×';
+}
+function replayPlay() { if (!rp.on) return; if (state.phase === 'finished') { rp.seek = 0; rp.paused = false; } else rp.paused = !rp.paused; audio.sound('select'); render(); }
+function replaySeek(k) { if (!rp.on) return; rp.seek = Math.max(0, Math.min(rp.full.attacks.length, k)); queue = []; render(); }
+setInterval(() => {
+  if (!rp.on || !state?.replay) return;
+  if (rp.seek != null) { if (animating) return; const k = rp.seek; rp.seek = null; frame(k, true); return; }
+  if (rp.paused || animating || queue.length || state.phase === 'finished') return;
+  const t = Date.now(); if (t - rp.t < (rp.fast ? 150 : 450)) return; rp.t = t;
+  frame(nextStop(rp.k), false);
+}, 120);
+addEventListener('keydown', e => {
+  if (!rp.on || !state?.replay || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.closest?.('#replay-bar')) return;
+  const k = e.key;
+  if (k === ' ') replayPlay(); else if (k === 'ArrowRight') { rp.paused = true; replaySeek(nextStop(rp.k)); } else if (k === 'ArrowLeft') { rp.paused = true; replaySeek(prevStop(rp.k)); } else if (k === 'Escape') leaveReplay(); else return;
+  e.preventDefault(); e.stopPropagation();
+}, {capture: true});
+$('#rp-play').onclick = replayPlay;
+$('#rp-seek').oninput = e => { rp.paused = true; replaySeek(Number(e.target.value)); };
+$('#rp-fast').onclick = () => { rp.fast = !rp.fast; settings.fast = rp.fast || rp.wasFast; render(); };
+$('#rp-link').onclick = () => copy(`${gameUrl()}?r=${toShort(state.id)}`, 'Replay link copied: it plays for a week after the battle.');
+$('#rp-exit').onclick = leaveReplay;
+$('#cta-replay').onclick = () => state && startReplay(state.id);
 
 /* ---------------- wiring ---------------- */
 async function copy(text, msg = 'Copied!') { try { await navigator.clipboard.writeText(text); toast(msg); audio.sound('copy'); } catch { toast('Copy this: ' + text); } }

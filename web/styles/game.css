@@ -456,3 +456,15 @@ body.switching #sea { opacity: .15; }
 .pass-curtain h2{font:400 44px 'Lilita One',system-ui,sans-serif;margin:6px 0 4px;color:var(--yellow)}
 .pass-curtain .small{opacity:.7;margin-bottom:18px}
 @media (max-width:700px){.captains{top:118px}.captains .cap{padding:5px 9px}.captains .cap b{font-size:13px}}
+
+/* replays (v0.21): a slim player above the dock */
+.replay-bar { position: absolute; left: 50%; top: 120px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 14px; background: rgba(6, 18, 32, .82); border: 1px solid rgba(127, 227, 255, .35); color: #dff6ff;
+  font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; box-shadow: 0 6px 20px rgba(0, 0, 0, .3); width: min(560px, calc(100vw - 32px)); }
+.replay-bar[hidden] { display: none; }
+.replay-bar button { min-width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(127, 227, 255, .35); background: rgba(127, 227, 255, .12); color: inherit; font: inherit; cursor: pointer; }
+.replay-bar button:hover { background: rgba(127, 227, 255, .25); }
+.replay-bar button[aria-pressed="true"] { background: #7fe3ff; color: #062033; }
+.replay-bar input[type=range] { flex: 1; min-width: 60px; accent-color: #7fe3ff; }
+.rp-pos { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .replay-bar { top: auto; bottom: 96px; gap: 5px; padding: 5px 7px; } .replay-bar #rp-link { display: none; } }

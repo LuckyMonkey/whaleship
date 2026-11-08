@@ -400,3 +400,25 @@ test('attract mode: a CPU-vs-CPU demo on one socket, paced by the client, never 
     assert.throws(() => readFileSync(path.join(dir, 'results.jsonl')), 'nothing scored');
   } finally { await stop(srv); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('replays: a finished battle comes back whole (both fleets, every move); a game still being played never does', async () => {
+  const c = await solo({ size: 9, rules: 'classic' }); let st = c.st;
+  const early = await c.send({ type: 'REPLAY', session: st.id }); assert.ok(early.error, 'no replay while playing');
+  for (let turns = 0; st.phase === 'playing' && turns < 60; turns++) {
+    const res = await c.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!res.error, res.error);
+    st = res.state; if (st.phase === 'playing' && st.turn !== st.seat) st = (await new Promise(r => setTimeout(r, 900)), c.st);
+  }
+  assert.equal(st.phase, 'finished');
+  const viewer = client(); await viewer.open;
+  const r = await viewer.send({ type: 'REPLAY', session: st.id }); assert.ok(!r.error, r.error);
+  assert.equal(r.state.replay, true); assert.equal(r.state.fleets.length, 2); assert.equal(r.state.attacks.length, st.attacks.length);
+  for (const f of r.state.fleets) assert.equal(f.length, st.fleet.length);
+  // replaying the log onto empty boards gives the final boards
+  for (const t of [0, 1]) {
+    const b = new Array(81).fill(0); for (const c2 of r.state.firewalls) b[c2] = 5;
+    for (const a of r.state.attacks.filter(a => !a.reveal && 1 - a.seat === t)) { b[a.cell] = a.hit ? 2 : 1; if (a.sunk) r.state.fleets[t].find(x => x.id === a.sunk.id).cells.forEach(x => b[x] = 3); }
+    assert.deepEqual(b, t === r.state.seat ? r.state.me.shots : r.state.opponent.shots);
+  }
+  const mine = await c.send({ type: 'REPLAY', session: st.id, credential: c.created.credential }); assert.equal(mine.state.seat, 0);
+  c.close(); viewer.close();
+});

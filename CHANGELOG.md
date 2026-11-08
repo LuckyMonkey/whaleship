@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 — 2026-11-07
+
+**Replays.** Every finished battle plays back from its move log, with the same animations it had live.
+
+- **▶ REPLAY** on the result screen, and the **📣 BRAG** link (`?r=…`) now opens the replay as well as its preview
+  card. Anyone with the link can watch while the battle is kept (a week after it ends).
+- A slim player: play/pause, a slider to any move, **1×/2×**, 🔗 copy the link, ✕ leave. Keys: space, ← → a turn, Esc.
+- Only **finished** battles replay (a replay shows both fleets). Restores, decoys and 3-captain battles play back too.
+
 ## 0.20.0 — 2026-11-07
 
 **3 captains: a quick game for three.** A new mode; two-player games, and games already in progress, are unchanged.

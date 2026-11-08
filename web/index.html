@@ -34,6 +34,14 @@
       </div></div></div>
     </div>
     <canvas id="fx" class="fx" aria-hidden="true"></canvas>
+    <div id="replay-bar" class="replay-bar" role="toolbar" aria-label="Replay" hidden>
+      <button id="rp-play" aria-label="Pause">⏸</button>
+      <input id="rp-seek" type="range" min="0" max="1" value="0" aria-label="Move">
+      <span id="rp-pos" class="rp-pos">0/0</span>
+      <button id="rp-fast" aria-pressed="false" title="Speed">1×</button>
+      <button id="rp-link" title="Copy the replay link">🔗</button>
+      <button id="rp-exit" title="Leave the replay (Esc)" aria-label="Leave the replay">✕</button>
+    </div>
     <div id="result-overlay" class="result-overlay" hidden><div class="result-card"><p class="result-emoji" id="result-emoji">🏆</p><h2 id="result-title"></h2><pre id="result-report" class="report"></pre><p id="result-line"></p></div></div>
   </section>
 
@@ -55,6 +63,7 @@
       <button id="cta-notify" class="big secondary"><span>🔔 PING ME</span><small>when it's my turn</small></button>
       <button id="cta-forfeit" class="big secondary"><span>🏳 CLAIM WIN</span><small>opponent went dark</small></button>
       <button id="cta-again" class="big primary"><span>↻ PLAY AGAIN</span><small>$ docker compose restart</small></button>
+      <button id="cta-replay" class="big secondary"><span>▶ REPLAY</span><small>$ docker compose logs --follow</small></button>
       <button id="cta-share" class="big secondary"><span>📣 BRAG</span><small>share the result</small></button>
     </div>
     <a class="signin-link hud-signin" hidden>🔐 Sign in with fridge.run — keep your games on every device</a>
