@@ -9,6 +9,17 @@
 - A slim player: play/pause, a slider to any move, **1×/2×**, 🔗 copy the link, ✕ leave. Keys: space, ← → a turn, Esc.
 - Only **finished** battles replay (a replay shows both fleets). Restores, decoys and 3-captain battles play back too.
 
+**Showdown.** Pinned per match (`pace` 3): games started before this release finish under their old rules.
+
+- In a 2-captain battle, when **both captains are down to their last vessel**, the map is wiped clean (misses, hits, scan
+  marks and decoys; wrecks and icebergs stay) and **turns end**.
+- It's a race: **every tap on their waters is a shot, fired at once** (or type a sector letter and then digits). A miss
+  splashes and leaves no mark, so remember where you've been; **a hit sticks** and the view closes in on it. Sink their
+  last vessel first to win.
+- It only runs while **both captains are online** (a CPU always is), so nobody wins an async friend game while the other
+  is away. CPU captains tap at their own pace (easy is slow, hard hunts around its hits).
+- Replays show the wipe and every hit; 3-captain battles don't have a showdown (they end when one fleet is left).
+
 **One ocean.** Your waters and theirs now float on the same sea, side by side, with open water and Conway foam in the
 channel between them (3D; the 2D board is unchanged).
 

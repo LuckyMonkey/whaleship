@@ -228,7 +228,7 @@ test('state transfer: a game in progress survives a server update + schema migra
   await stop(srvA);                                                    // SIGTERM flushes pending saves
   // rewrite the save as the previous release would have written it (schema v3, no pace field)
   const f = path.join(dir, 'matches', created.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8'));
-  assert.equal(saved.v, 4); assert.equal(saved.pace, 2); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
+  assert.equal(saved.v, 4); assert.equal(saved.pace, 3); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
   // a file from a FUTURE schema (e.g. after a rollback) must be left alone, byte for byte
   const fut = path.join(dir, 'matches', 'f'.repeat(32) + '.json'), futBody = JSON.stringify({ ...saved, id: 'f'.repeat(32), v: 99 }); writeFileSync(fut, futBody);
   const check = JSON.parse(execFileSync(process.execPath, ['server.js', '--check-data', path.join(dir, 'matches')], { cwd: path.resolve(import.meta.dirname, '..'), env: { ...process.env, DATA_DIR: mkdtempSync(path.join(tmpdir(), 'ws-chk-')) } }).toString());
@@ -279,7 +279,7 @@ test('restore (pace 2): the damaged creature comes back whole somewhere in the 5
   const made = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'warfare', size: 36, name: 't' });
   await a.act('RANDOMIZE_FLEET'); await a.act('READY'); await new Promise(r => setTimeout(r, 400)); a.close(); await stop(srv1);
   const f = path.join(dir, 'matches', made.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8')), W = 18;
-  assert.equal(saved.pace, 2, 'new matches are pace 2');
+  assert.ok(saved.pace >= 2, 'new matches are pace 2 or later');
   const me = saved.seats[0], ship = me.ships.find(sh => sh.cells.length >= 3 && saved.fleet[sh.id].kind !== 2) || me.ships.find(sh => sh.cells.length >= 3);
   const pick = ship.cells[1], px = pick % W, py = Math.floor(pick / W), inSq = c => Math.abs(c % W - px) <= 2 && Math.abs(Math.floor(c / W) - py) <= 2;
   me.board[pick] = 2;                                                         // the enemy hit it once
@@ -421,4 +421,33 @@ test('replays: a finished battle comes back whole (both fleets, every move); a g
   }
   const mine = await c.send({ type: 'REPLAY', session: st.id, credential: c.created.credential }); assert.equal(mine.state.seat, 0);
   c.close(); viewer.close();
+});
+
+test('showdown (pace 3): last vessel each - the map is wiped, turns end, taps resolve live, misses leave no mark, a sinking ends it', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ws-sd-')), port = PORT + 4; let srv = await bootServer(dir, port);
+  try {
+    let a = clientAt(port); await a.open;
+    const created = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'classic', size: 9, name: 't' });
+    await a.act('RANDOMIZE_FLEET'); await a.act('READY'); await new Promise(r => setTimeout(r, 400)); a.close(); await stop(srv);
+    const f = path.join(dir, 'matches', created.state.id + '.json'), m = JSON.parse(readFileSync(f, 'utf8'));
+    assert.equal(m.pace, 3);
+    for (const x of m.seats) x.ships.slice(1).forEach(sh => sh.cells.forEach(c => x.board[c] = 3));   // everything but the first vessel is a wreck
+    const ai = m.seats[1], last = ai.ships[0].cells, wreck = new Set(ai.ships.slice(1).flatMap(sh => sh.cells));
+    const water = [...Array(81).keys()].filter(c => ai.board[c] === 0 && !last.includes(c));
+    ai.board[water[5]] = 1; m.turn = 0; writeFileSync(f, JSON.stringify(m));                          // an old miss, to be wiped
+    srv = await bootServer(dir, port); a = clientAt(port); await a.open;
+    await a.send({ type: 'RESUME_MATCH', session: m.id, credential: created.credential }); await new Promise(r => setTimeout(r, 300));
+    const shot = await a.act('FIRE', { cells: [water[0]] }); assert.ok(!shot.error, shot.error);
+    const st = shot.state; assert.ok(st.showdown, 'showdown started'); assert.equal(st.showdown.live, true);
+    assert.ok(!st.opponent.shots.some(v => v === 1 || v === 2), 'their waters wiped'); assert.ok(!st.me.shots.some(v => v === 1 || v === 2), 'mine too');
+    assert.ok([...wreck].every(c => st.opponent.shots[c] === 3), 'wrecks stay');
+    assert.ok((st.events || []).some(e => e.kind === 'showdown'));
+    const late = await a.act('FIRE', { cells: [water[1]] }); assert.match(late.error, /Showdown/);
+    const miss = await a.send({ type: 'SNAP', session: m.id, cell: water[2] }); assert.equal(miss.type, 'SNAP'); assert.equal(miss.hit, false);
+    let r; for (const c of last) { await new Promise(res => setTimeout(res, 200)); r = await a.send({ type: 'SNAP', session: m.id, cell: c }); }
+    assert.equal(r.state.phase, 'finished'); assert.equal(r.state.winner, 0); assert.equal(r.state.reason, 'showdown');
+    assert.equal(r.state.opponent.shots[water[2]], 0, 'a showdown miss leaves no mark');
+    assert.ok(r.state.attacks.filter(x => x.snap).length === last.length);
+    a.close(); await new Promise(res => setTimeout(res, 300));
+  } finally { await stop(srv); rmSync(dir, { recursive: true, force: true }); }
 });

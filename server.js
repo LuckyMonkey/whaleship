@@ -167,7 +167,8 @@ function persist(m) {
    Each schema bump adds one step to MIGRATIONS; load() upgrades old files in memory (written back on next save).
    Files from a NEWER schema (after a rollback) are left untouched on disk and not served, so they can't be damaged.
    `node server.js --check-data DIR` runs the same load against a copy of the data without writing anything. */
-const SCHEMA = 4, PACE = 2;   // pace 2 (v0.19): restore relocates the creature (relocate()); older matches keep the one-segment repair
+const SCHEMA = 4, PACE = 3;   // pace 2 (v0.19): restore relocates the creature (relocate()); older matches keep the one-segment repair
+                              // pace 3 (v0.21): showdown when both captains are down to one vessel (see SHOWDOWN below)
 const MIGRATIONS = {
   // v1–v2 (no m.v) and v3 → v4: record that the match started under the original salvo rule (pace 0).
   3: m => { m.pace ??= 0; },
@@ -254,6 +255,7 @@ function view(m, s) {
     opponent: op ? { name: op.name, ready: op.ready, shots: op.board, sunk: op.ships.filter(sh => isSunk(op, sh)), manifest: Object.fromEntries(op.ships.filter(sh => isSunk(op, sh)).map(sh => [sh.id, mf[1 - s][sh.id]])), sonar: me.sonar, roles: Object.fromEntries(Object.keys(ROLE).map(r => [r, op.ships.some(sh => m.fleet[sh.id].kind === ROLE[r] && !isSunk(op, sh))])) } : null,
     attacks: m.attacks, connected: m.seats.map(x => !!x && (x.ai || x.connected)), disconnect_seconds: m.seats.map(gone), forfeit_after: FORFEIT_AFTER,
     winner: m.winner, reason: m.reason, score_saved: m.score_saved,
+    showdown: m.showdown ? { started: m.showdown.started, live: showdownLive(m) } : null,
   };
 }
 function send(ws, obj) { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); }
@@ -316,6 +318,7 @@ function joinMatch(ws, msg, resume) {
     if (ws.authed && credOk(m.seats[seat], msg.credential) && String(m.seats[seat].identity).startsWith('guest:')) { m.seats[seat].identity = ws.identity; m.seats[seat].name = ws.name; }
     const cred = credOk(m.seats[seat], msg.credential) ? msg.credential : issue(m.seats[seat]);
     attach(ws, m, seat); persist(m);
+    if (m.showdown && m.phase === 'playing') sdLoop(m, 1500);
     send(ws, { type: 'MATCH_RESUMED', state: view(m, seat), credential: cred });
     return broadcast(m, 'PRESENCE');
   }
@@ -465,6 +468,7 @@ function endTurn(m, s) {
     chaosEvent(m, 1 - s);
     if (op.ships.every(sh => isSunk(op, sh))) finish(m, s, 'fleet');
   }
+  if (m.phase === 'playing') maybeShowdown(m);
 }
 function special(m, s, msg) {
   const me = m.seats[s], op = m.seats[1 - s], id = String(msg.power), sp = SPECIALS[id], { w, h } = DIM(m.size);
@@ -537,6 +541,7 @@ function finish(m, winner, reason) {
 }
 function fire(m, s, msg) {
   if (m.phase !== 'playing') return 'The battle has not started.';
+  if (m.showdown) return 'Showdown! Tap their waters as fast as you can.';
   if (m.turn !== s) return 'Not your turn — the enemy is aiming.';
   const me = m.seats[s], op = m.seats[1 - s], n = DIM(m.size).w * DIM(m.size).h;
   const power = msg.type === 'POWER' ? String(msg.power) : null;
@@ -562,10 +567,67 @@ function fire(m, s, msg) {
     strike(m, s, cells);
   }
   endTurn(m, s);
-  if (m.phase === 'playing' && m.seats[m.turn].ai) aiTurn(m, m.turn);
+  if (m.phase === 'playing' && !m.showdown && m.seats[m.turn].ai) aiTurn(m, m.turn);
   return null;
 }
 
+
+/* ---------------- SHOWDOWN (pace 3, v0.21): the end of a 2-captain battle, in real time ----------------
+   When both captains are down to their last vessel, the map is wiped clean (misses, hits, scan marks and decoys; wrecks
+   and icebergs stay) and turns end: both captains tap the enemy's waters as fast as they can (SNAP, one shot a tap).
+   A miss splashes and leaves no mark; a hit sticks. Sink their last vessel to win. It only runs while both captains are
+   online (an AI always is), so nobody wins an async friend game while the other is away. CPU captains tap at their pace. */
+const SNAP_GAP = 160, SD_AI_MS = { easy: 2400, normal: 1700, hard: 1150 };   // a person can tap 3-5 times a second; the CPU is slower but never forgets
+const lastVessel = seat => seat.ships.filter(sh => !isSunk(seat, sh)).length === 1;
+function maybeShowdown(m) {
+  if (m.pace < 3 || trio(m) || m.showdown || m.phase !== 'playing' || !m.seats.every(x => x && lastVessel(x))) return;
+  for (const x of m.seats) { x.board = x.board.map(v => v === 3 || v === 5 ? v : 0); x.sonar = []; if (x.decoys) x.decoys = []; x.frozen = 0; }
+  m.showdown = { started: Math.floor(now() / 1000), tried: [[], []] };
+  m.attacks.push({ seat: -1, cell: -1, hit: false, sunk: null, turn: m.turn_number, reveal: true, showdown: true });   // replays wipe the map here too
+  pushEvent(m, { seat: -1, kind: 'showdown' });
+  sdLoop(m, 4500);   // after the intro
+}
+const sdLoops = new Set();   // matches whose CPU captain is tapping (in memory only: never saved)
+function sdLoop(m, ms) { if (sdLoops.has(m.id) || !m.seats.some(x => x?.ai)) return; sdLoops.add(m.id); setTimeout(() => showdownAi(m), ms); }
+const showdownLive = m => m.seats.every(x => x && (x.ai || x.connected));
+function snap(m, s, cell) {
+  const me = m.seats[s], op = m.seats[1 - s], n = DIM(m.size).w * DIM(m.size).h, t = now();
+  if (!m.showdown || m.phase !== 'playing') return { err: 'No showdown running.' };
+  if (!showdownLive(m)) return { err: 'Waiting for both captains to be online.' };
+  if (!Number.isInteger(cell) || cell < 0 || cell >= n) return { err: 'Pick a square.' };
+  if (t - (me.lastSnap || 0) < SNAP_GAP) return { quiet: true };
+  me.lastSnap = t;
+  if (op.board[cell] !== 0) return { quiet: true };                       // a hit already sticks there / wreck / iceberg
+  const ship = op.ships.find(sh => sh.cells.includes(cell));
+  if (!ship) return { miss: true };
+  strike(m, s, [cell]); const a = m.attacks[m.attacks.length - 1]; a.snap = true;
+  if (op.ships.every(sh => isSunk(op, sh))) finish(m, s, 'showdown');
+  return { hit: true };
+}
+// SNAP over the socket: misses are a light broadcast (nothing is saved); hits change the match and go out as STATE
+function snapMsg(ws, m, s, msg) {
+  const r = snap(m, s, Number(msg.cell));
+  if (r.err) return send(ws, { error: r.err });
+  if (r.quiet) return;
+  if (r.miss) { for (const o of sockets.get(m.id) || []) send(o, { type: 'SNAP', seat: s, cell: Number(msg.cell), hit: false }); return; }
+  bump(m, m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED');
+}
+function showdownAi(m) {
+  if (!m.showdown || m.phase !== 'playing' || matches.get(m.id) !== m) { sdLoops.delete(m.id); return; }
+  const s = m.seats.findIndex(x => x.ai); if (s < 0) return;
+  const level = m.seats[s].ai, wait = SD_AI_MS[level] || 1000;
+  if (showdownLive(m)) {
+    const op = m.seats[1 - s], { w: W } = DIM(m.size), T = op.board.length, tried = new Set(m.showdown.tried[s]);
+    const hits = op.board.map((v, c) => v === 2 ? c : -1).filter(c => c >= 0);
+    let pool = [];
+    if (hits.length && (level === 'hard' || Math.random() < .5)) for (const h of hits) for (const d of [-1, 1, -W, W]) { const c = h + d; if (c >= 0 && c < T && op.board[c] === 0 && !tried.has(c) && !((d === 1 || d === -1) && Math.floor(c / W) !== Math.floor(h / W))) pool.push(c); }
+    if (!pool.length) pool = op.board.map((v, c) => v === 0 && !tried.has(c) ? c : -1).filter(c => c >= 0);
+    if (!pool.length) { m.showdown.tried[s] = []; pool = op.board.map((v, c) => v === 0 ? c : -1).filter(c => c >= 0); }
+    const cell = pool[crypto.randomInt(pool.length)]; m.showdown.tried[s].push(cell); m.seats[s].lastSnap = 0;
+    snapMsg({ readyState: 0 }, m, s, { cell });
+  }
+  if (m.phase === 'playing') setTimeout(() => showdownAi(m), wait * (.7 + Math.random() * .6)); else sdLoops.delete(m.id);
+}
 
 /* ---------------- 3-player quick battles (v0.20, m.players === 3) ----------------
    Three quick maps (9×9, 3×3 sectors each), one per captain. Sector letters are per map so a shot reads unambiguously:
@@ -761,7 +823,7 @@ let demoCount = 0;
 function demoView(ws) { const v = view(ws.demo, 0); v.demo = true; v.names = ws.demo.seats.map(x => x.name); return v; }
 function demoStart(ws) {
   if (ws.demo || demoCount >= 200) return;
-  const size = 9, m = { v: SCHEMA, pace: PACE, rules: 'classic', firewalls: [], events: [], manifest: null, id: rid(16), mode: 'demo', size, fleet: fleetFor(size), phase: 'playing', revision: 1,
+  const size = 9, m = { v: SCHEMA, pace: 2, rules: 'classic', firewalls: [], events: [], manifest: null, id: rid(16), mode: 'demo', size, fleet: fleetFor(size), phase: 'playing', revision: 1,
     turn: crypto.randomInt(2), turn_number: 0, winner: null, reason: null, score_saved: true, created: Math.floor(now() / 1000), started: Math.floor(now() / 1000), finished: null, attacks: [], seats: [null, null] };
   [['🐋 Whale AI', 'hard'], ['🦭 Walrus AI', 'normal']].forEach(([name, lvl], i) => { const x = newSeat('ai:' + lvl, name, m, lvl); x.ships = randomFleet(size, m.fleet, m.firewalls); x.ready = true; m.seats[i] = x; });
   if (crypto.randomInt(2)) m.seats.reverse();
@@ -826,6 +888,7 @@ function handle(ws, raw) {
     case 'ATTACK': case 'FIRE': case 'POWER':
       if (trio(m)) { err = msg.type === 'POWER' ? 'No specials in 3-captain battles.' : trioFire(m, s, msg); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED'; break; }
       err = fire(m, s, msg); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED'; break;
+    case 'SNAP': if (trio(m)) { err = 'Unknown command.'; break; } return snapMsg(ws, m, s, msg);
     case 'ADD_CPU': if (!trio(m)) { err = 'Unknown command.'; break; } err = trioAddCpu(m, s, msg); break;
     case 'ADD_LOCAL': {
       if (!trio(m)) { err = 'Unknown command.'; break; }

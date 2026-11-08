@@ -64,7 +64,8 @@ let aimSeat = 1;
 const volley = new Map();                          // 3 captains: seat -> Set(cells) queued this round, across both rivals
 const trioOn = () => state?.players === 3;
 const multi = () => !spect() && (state?.mode === 'multiplayer' || state?.mode === 'trio');
-const spect = () => !!(state?.demo || state?.replay);   // attract mode or a replay: watched, never played
+const spect = () => !!(state?.demo || state?.replay);
+const sdOn = () => !!state?.showdown && state.phase === 'playing' && !spect();   // showdown (pace 3): real-time taps, no turns   // attract mode or a replay: watched, never played
 let deviceSeats = (() => { try { return JSON.parse(localStorage.getItem('whaleship:device-seats') || '{}'); } catch { return {}; } })();   // matchId -> {seat: credential}: captains playing on this device
 const saveDeviceSeats = () => { try { localStorage.setItem('whaleship:device-seats', JSON.stringify(deviceSeats)); } catch {} };
 let lastWinner = null, joining = false, justCreated = false, lastTurnMine = null;
@@ -201,6 +202,7 @@ function connect() {
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
+    if (msg.type === 'SNAP') { if (state && !spect()) snapMissed(msg); return; }
     if (msg.type === 'DEMO_STATE') { if (demo.on) onState(msg); return; }
     if (msg.type === 'REPLAY') { bootDone(); if (msg.error) { toast(msg.error); if (/[?&]r=/.test(location.search)) historyReplace(); } else beginReplay(msg.state); return; }
     if (msg.type === 'LOCAL_SEAT' && msg.state?.id) { (deviceSeats[msg.state.id] ||= {})[msg.seat] = msg.credential; saveDeviceSeats(); toast(`🛋️ Captain ${msg.seat + 1} plays on this device: pass it over when it's their volley.`); }
@@ -236,7 +238,7 @@ function setAim(seat, quiet = false) {
 }
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
 function onState(msg) {
-  const incoming = adaptTrio(msg.state);
+  const incoming = adaptTrio(msg.state), snaps = [];
   if (incoming.demo || incoming.replay) incoming.turn = -1;
   if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
   if (rp.on && state?.replay && !incoming.replay) return;                  // a live update for the battle being replayed waits
@@ -246,6 +248,8 @@ function onState(msg) {
   if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
   else for (const a of incoming.attacks.slice(seen)) {
     const mine = a.seat === incoming.seat;
+    if (a.showdown) continue;
+    if (a.snap) { snaps.push(a); continue; }
     if (incoming.players === 3) { (a.target === incoming.seat ? hidden.home : hk('t' + a.target)).add(a.cell); queue.push(a); continue; }
     if (!a.reveal) hidden[mine ? 'target' : 'home'].add(a.cell);
     if (a.sunk && mine) hiddenSunk.add(a.sunk.id);
@@ -293,6 +297,9 @@ function onState(msg) {
   if (mineNow && lastTurnMine === false && !queue.length) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); }
   lastTurnMine = mineNow;
   rememberMatch(); render(); playNext(); bootDone();
+  if (state.showdown && prev && !prev.showdown) sdIntro = true;
+  if (sdIntro && !animating && !queue.length) showdownIntro();
+  for (const a of snaps) snapLanded(a);
   if (restoring && document.body.classList.contains('switching')) requestAnimationFrame(() => requestAnimationFrame(() => { document.body.classList.remove('switching'); clearTimeout(switchTimer); }));
 }
 
@@ -768,7 +775,7 @@ function areaOf(cell, power, r = rotN) {
 }
 function preview(c) {
   const hadArea = area.length; hover = c; area = armed && view === (PI(armed).own ? 'home' : 'target') && myTurn() && c >= 0 ? areaOf(SECT() && (armed === 'scan' || armed === 'sonar') ? cellOf(secOf(c), 5) : c, armed) : [];
-  if (R3) { R3.setHover(!armed && c >= 0 && ((view === 'target' && myTurn()) || deploying()) ? c : -1); if (area.length || hadArea) drawPlane(); return; }
+  if (R3) { R3.setHover(!armed && c >= 0 && ((view === 'target' && (myTurn() || sdOn())) || deploying()) ? c : -1); if (area.length || hadArea) drawPlane(); return; }
   drawPlane();
 }
 // Fit the board into the free part of the screen (left of the side console on desktop, above the console on phones).
@@ -779,6 +786,7 @@ function layout3D() {
 
 /* ---------------- taps ---------------- */
 function tileTap(c) {
+  if (sdOn() && c >= 0 && !animating) { if (view !== 'target') { slideTo('target'); return; } snapAt(c); return; }
   if (animating || sliding) return;
   if (!state) { if (connected && !pending) newGame($('#difficulty').value); return; }
   if (c < 0) return;
@@ -806,6 +814,7 @@ function selectSector(si) {
 }
 // Input state machine: AwaitingSector (sel < 0) → AwaitingSubsector (sel ≥ 0) → commit → AwaitingSector.
 function keypad(k) {
+  if (sdOn() && SECT() && sel >= 0) { snapAt(cellOf(sel, k)); return; }   // showdown: sector stays picked, each digit fires
   if (!SECT() || !myTurn() || animating || sliding) return;
   if (sel < 0) { toast('Pick a sector first — its letter, or tap the map.'); bump('#hint'); return; }
   const c = cellOf(sel, k), m = state.opponent?.shots[c] || 0;
@@ -818,6 +827,7 @@ function backspace() {
   const last = [...targets].pop(); if (last != null) { targets.delete(last); audio.sound('select'); log(`unarm ${coord(last)}`, 'event'); render(); }
 }
 function aimAt(c) {
+  if (sdOn()) { snapAt(c); return; }
   if (SECT() && (armed === 'sonar' || armed === 'scan')) c = cellOf(secOf(c), 5);   // a port scan covers exactly one sector
   if (armed) {
     const p = armed, P = PI(p), own = !!P.own, r = P.rot ? rotN : 0; armed = null; area = [];
@@ -1153,10 +1163,10 @@ async function playNext() {
   animating = false;
   if (!queue.length && state?.phase === 'playing') {
     await sleep(fast ? 200 : 400);
-    const want = myTurn() ? 'target' : 'home'; if (view !== want) await slideTo(want);
+    const want = myTurn() || sdOn() ? 'target' : 'home'; if (view !== want) await slideTo(want);
     if (myTurn()) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); log(`${ts()} ⏎ your turn · ${salvo()} ping${salvo() > 1 ? 's' : ''} · ${specList().filter(x => x.ok).map(x => PI(x.id).short.toLowerCase()).join(' ') || 'no specials ready'}`, 'event'); }
   }
-  render(); playNext();
+  render(); if (sdIntro && !queue.length) showdownIntro(); playNext();
 }
 
 /* ---------------- idle life ---------------- */
@@ -1186,6 +1196,7 @@ function paintBanner() {
     if (!state.me.ready) { text = settings.manual ? '⚓ Arrange your stack' : '⚓ Deploying your stack…'; kind = 'deploy'; }
     else if (state.mode === 'multiplayer' && !state.opponent) { text = '📨 Waiting for a friend to open your link'; kind = 'wait'; }
     else { text = `⏳ Waiting for ${oppName()} to deploy`; kind = 'wait'; }
+  } else if (sdOn()) { text = state.showdown.live ? '⚡ SHOWDOWN — tap their waters, fast!' : `⚡ SHOWDOWN — waiting for ${oppName()} to come online`; kind = state.showdown.live ? 'mine' : 'wait';
   } else if (state.phase === 'playing') {
     if (myTurn()) { text = salvo() > 1 ? `🟢 YOUR TURN — ${salvo()} pings` : '🟢 YOUR TURN — ping one'; kind = 'mine'; }
     else { text = `🟠 ${oppName()}’s turn`; kind = 'theirs'; }
@@ -1206,6 +1217,8 @@ function renderHud() {
     const waitingFriend = state.mode === 'multiplayer' && !state.opponent;
     if (!state.me.ready) { hint = held != null ? `tap water to move ${NICE(held)} · tap it again to rotate` : 'drag a creature to move it · tap one, then tap water'; ids = ['cta-shuffle', 'cta-ready', ...(waitingFriend ? ['cta-invite'] : [])]; pulse = state.me.ships.length === FLEET.length ? 'cta-ready' : null; }
     else { hint = waitingFriend ? 'no rush — close the tab if you like, your seat waits' : `${oppName()} is deploying…`; ids = [...(waitingFriend ? ['cta-invite'] : []), ...(canNotify && waitingFriend ? ['cta-notify'] : [])]; pulse = waitingFriend ? 'cta-invite' : null; }
+  } else if (sdOn()) {
+    hint = state.showdown.live ? `⚡ last vessel each · tap ${view === 'target' ? 'anywhere in their waters' : 'their board'} · misses leave no mark · a hit sticks` : 'the showdown starts the moment both captains are online';
   } else if (state.phase === 'playing') {
     const claim = state.mode === 'multiplayer' && state.disconnect_seconds?.[1 - state.seat] >= state.forfeit_after;
     if (animating) hint = '📡 packets in flight…';
@@ -1495,6 +1508,39 @@ async function setSound(on, persist) { soundOn = on; if (persist) { try { localS
 const unlock = e => { if (e.target.closest?.('#sound-toggle')) return; if (soundOn && !audio.isEnabled()) setSound(true); };
 addEventListener('pointerdown', unlock, {capture: true}); addEventListener('keydown', unlock, {capture: true});
 
+/* ---------------- showdown (pace 3, v0.21): both down to one vessel - the map is wiped and it's a race ----------------
+   Every tap on their waters is one shot, sent at once (no queue, no TRANSMIT). A miss splashes and vanishes; a hit sticks
+   and the view closes in on it. Sink their last vessel first. */
+let sdIntro = false, lastSnap = 0;
+function showdownIntro() {
+  sdIntro = false; hidden.home.clear(); hidden.target.clear(); targets.clear(); volley.clear(); armed = null; sel = -1;
+  log(`[ SHOWDOWN ] both clusters are down to one host\n$ kubectl delete events --all   # the map is wiped: misses, hits and scans\n$ while true; do ping -c1 $(shuf -n1 hosts); done   # tap their waters as fast as you can · a hit sticks`, 'hit');
+  audio.sound('turn'); setTimeout(() => audio.sound('gull'), 500);
+  autoZoom(); render();
+  if (!settings.reduced) { const g = geo(); fxText({x: g.sea.width / 2, y: g.sea.height * .42, w: 60}, '⚡ SHOWDOWN', '#ffd34d', 46, 1900); }
+  if (view !== 'target') slideTo('target');
+}
+function snapAt(c) {
+  if (!state?.showdown?.live) { toast(`Showdown: waiting for ${oppName()} to come online.`); return; }
+  const t = Date.now(); if (t - lastSnap < 170) return; lastSnap = t;
+  if ((state.opponent?.shots[c] || 0) !== 0) { audio.sound('error'); return; }
+  raw({type: 'SNAP', session: state.id, cell: c}); audio.sound('packet');
+  if (!settings.reduced) fxRing(cellPoint(c), 3, cellPoint(c).w * .5, '#ffd34d', 380);
+}
+function snapMissed(msg) {
+  const mine = msg.seat === state.seat, board = mine ? 'target' : 'home';
+  if (R3) R3.splash(msg.cell, 'miss', board); else if (view === board && !settings.reduced) fxRing(cellPoint(msg.cell), 3, cellPoint(msg.cell).w * .6, '#dff6ff', 500);
+  if (mine) audio.sound('miss'); else if (Math.random() < .25) log(`${ts()} ${oppName()} pinged ${lc(msg.cell)} · missed`, 'miss');
+}
+async function snapLanded(a) {
+  const mine = a.seat === state.seat, board = mine ? 'target' : 'home', kind = a.sunk ? 'sunk' : 'hit';
+  if (R3) R3.splash(a.cell, kind, board);
+  audio.sound(a.sunk ? 'sunk' : 'hit', !mine);
+  log(mine ? `${lc(a.cell)} (${ip(a.cell, true)}): HIT${a.sunk ? ' · their last host is down' : ' · it sticks'}` : `${ts()} ⚠ ${oppName()} hit ${lc(a.cell)}${a.sunk ? ' · your last host is down' : ''}`, mine ? 'hit' : 'error');
+  if (view === board && !settings.reduced) fxText(cellPoint(a.cell), mine ? (a.sunk ? 'SUNK!' : 'HIT · IT STICKS') : 'THEY HIT US', mine ? '#ffd34d' : '#ff8a5c', 20, 1100);
+  if (mine && !a.sunk && view === 'target') { setZoom(Math.max(zoom.z, 1.8), 0, 0, true); await sleep(400); ensureVisible([a.cell]); }   // the view sticks to the spot you hit
+}
+
 /* ---------------- attract mode: a CPU battle plays behind the home screen when nobody's touched it ----------------
    After IDLE_MS on the home screen (no dialog open, tab visible, connected), the server plays a CPU-vs-CPU quick
    battle for this tab only (never saved or scored). The first touch or key drops it and brings the menu back; it also
@@ -1549,7 +1595,9 @@ function frameState(k) {
   const F = rp.full, st = structuredClone(F), n = F.players === 3 ? 3 : 2, T = F.w * F.h, fleets = F.fleets;
   const boards = Array.from({length: n}, () => { const b = new Array(T).fill(0); for (const c of F.firewalls || []) b[c] = 5; return b; }), sunk = Array.from({length: n}, () => []);
   const owner = (t, c) => fleets[t].some(sh => sh.cells.includes(c));
+  let sd = false;
   for (const a of F.attacks.slice(0, k)) {
+    if (a.showdown) { sd = true; boards.forEach(b => b.forEach((v, i) => { if (v === 1 || v === 2 || v === 4) b[i] = 0; })); continue; }
     if (a.restored) {                       // the restorer's own waters: the enemy's marks in the square are wiped
       const b = boards[a.seat]; if (!a.moved) { b[a.cell] = 0; continue; }
       for (const c of a.area || []) if (b[c] === 1 || (b[c] === 2 && !owner(a.seat, c))) b[c] = 0;
@@ -1563,7 +1611,7 @@ function frameState(k) {
   }
   const done = k >= F.attacks.length, me = F.seat;
   Object.assign(st, {attacks: F.attacks.slice(0, k), phase: done ? 'finished' : 'playing', winner: done ? F.winner : null, turn: -1, revision: k + 1,
-    turn_number: k ? F.attacks[k - 1].turn + 1 : 0, events: [], replay: true});
+    turn_number: k ? F.attacks[k - 1].turn + 1 : 0, events: [], replay: true, showdown: sd && F.showdown ? {...F.showdown, live: true} : null});
   st.me.shots = boards[me]; st.me.ships = fleets[me];
   if (n === 3) st.captains.forEach((c, i) => { if (c.empty) return; c.shots = boards[i]; c.sunk = sunk[i]; c.afloat = fleets[i].length - sunk[i].length; c.fired = false; if (!done && c.out != null && sunk[i].length < fleets[i].length) c.out = null; });
   else if (st.opponent) { st.opponent.shots = boards[1 - me]; st.opponent.sunk = sunk[1 - me]; }
@@ -1662,7 +1710,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '`') { e.preventDefault(); openTerminal(!document.body.classList.contains('term-open')); return; }
   if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { if (e.key === 'Escape') openTerminal(false); return; }
   const k = e.key.toLowerCase();
-  if (SECT() && myTurn() && !animating && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (SECT() && (myTurn() || sdOn()) && !animating && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (trioOn() && (/^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)))) {           // 3 captains: the letter picks the map too
       const seat = state.labels.findIndex(L => L.includes(k));
       if (seat >= 0 && seat !== state.seat && state.captains[seat]?.out == null) { e.preventDefault(); if (aimSeat !== seat) setAim(seat, true); if (view !== 'target') slideTo('target'); selectSector(state.labels[seat].indexOf(k)); return; }
