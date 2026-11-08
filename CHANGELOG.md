@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.21.4 — 2026-11-08
+
+**3-captain battles, reworked on screen.** Client plus link previews; no rule change, games in progress are untouched.
+
+- **Every volley at once:** a round plays as one scene. The camera frames all the boards still afloat and every
+  captain's packets fly together, each from their own board, a beat apart. Marks appear as they land, sounds are
+  throttled, one log line per captain, at most one repaint per frame (it used to replay volley by volley, and lagged).
+  The 3D packet pool grew from 8 to 24 so a full round never stalls.
+- **Bubbles above the boards:** each captain's bubble floats above their own map and follows the camera (it was one
+  bar across the top).
+- **A sunk captain leaves the ocean:** once the round that sank them has played, their map, ship, bubble and list entry
+  go, and the camera frames the one rival left.
+- **The map picker is a vertical list** with how many shots you've queued on each rival (and on both).
+- **The shot counter counts both maps:** TRANSMIT n/5 and the hints add up the shots queued on both rivals (it only
+  counted the map you were looking at, so it seemed you couldn't aim at both). The keypad shows the right rival's
+  letters after you switch.
+- **Link previews for 3-captain battles:** invite (seats open), battle in progress (three fleets, who's sunk) and result
+  cards, with their own titles and descriptions.
+- Fix: a "captain out" event in a 3-captain game threw an error.
+
 ## 0.21.3 — 2026-11-08
 
 **Showdown you can watch.** Client-side, plus one server fix; no rule change, games in progress are untouched.

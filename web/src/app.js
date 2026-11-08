@@ -244,6 +244,7 @@ function setAim(seat, quiet = false) {
   if (!quiet) { if (trioFocus !== 'both' && trioFocus !== seat) { trioFocus = seat; if (R3 && view === 'target') R3.focus(camKey(), settings.fast ? 320 : 560, actKey()); } audio.sound('select'); render(); }
 }
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
+const queuedAll = () => targets.size + volleyOthers();   // 3 captains: every shot queued, on both rivals' maps
 function onState(msg) {
   const incoming = adaptTrio(msg.state), snaps = [], round = [];
   if (incoming.demo || incoming.replay) incoming.turn = -1;
@@ -252,7 +253,7 @@ function onState(msg) {
   if (state?.id === incoming.id && incoming.revision < state.revision && !incoming.replay) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
-  if (restoring) { trioFocus = 'both'; FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10, incoming.players === 3 ? 3 : 2); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
+  if (restoring) { trioFocus = 'both'; shownOut = new Set(incoming.players === 3 ? [0, 1, 2].filter(i => i !== incoming.seat && incoming.captains?.[i]?.out != null) : []); FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10, incoming.players === 3 ? 3 : 2); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
   else for (const a of incoming.attacks.slice(seen)) {
     const mine = a.seat === incoming.seat;
     if (a.showdown) continue;
@@ -265,7 +266,8 @@ function onState(msg) {
   // 3 captains: a round lands all at once (in shuffled order). Play it in two scenes: everything that lands on a rival
   // (your volley first, as one launch to both maps; then rival on rival), then everything that lands on you.
   if (round.length) { const me = incoming.seat, rank = a => (a.target === me ? 2 : 0) + (a.seat === me ? 0 : 1);
-    queue.push(...round.map((a, i) => [a, i]).sort(([x, i], [y, j]) => rank(x) - rank(y) || x.seat - y.seat || i - j).map(([a]) => a)); }
+    const sorted = round.map((a, i) => [a, i]).sort(([x, i], [y, j]) => rank(x) - rank(y) || x.seat - y.seat || i - j).map(([a]) => a);
+    if (R3 && !settings.reduced) queue.push({round: sorted}); else queue.push(...sorted); }   // 0.21.4: the 3D ocean plays a round all at once
   seen = incoming.attacks.length;
   const evs = incoming.events || [];
   if (restoring) seenEvents = evs.length; const fresh = evs.slice(Math.min(seenEvents, evs.length)); seenEvents = evs.length;
@@ -520,8 +522,10 @@ const rivals = () => [0, 1, 2].filter(i => i !== state?.seat);
 const rk = seat => seat === state?.seat ? 'home' : layout === 3 ? (seat === rivals()[0] ? 'ra' : 'rb') : 'target';
 const seatOfKey = k => k === 'ra' ? rivals()[0] : k === 'rb' ? rivals()[1] : null;
 const actKey = () => view === 'home' ? 'home' : layout === 3 ? rk(aimSeat) : 'target';   // the board taps and effects land on
-let trioFocus = 'both';   // 3 captains, aiming: 'both' rivals' maps, or one rival's seat
-const camKey = () => layout === 2 && sdOn() ? 'duel' : view === 'home' ? 'home' : layout === 3 ? (trioFocus === 'both' || trioFocus === state?.seat || state?.captains?.[trioFocus]?.out != null || !state?.captains ? 'rivals' : rk(trioFocus)) : 'target';   // what the camera frames
+let trioFocus = 'both', shownOut = new Set();   // shownOut: rivals sunk and already shown going down - their boards are gone   // 3 captains, aiming: 'both' rivals' maps, or one rival's seat
+const camKey = () => { if (layout === 2) return sdOn() ? 'duel' : view === 'home' ? 'home' : 'target'; if (view === 'home') return 'home';
+  const left = rivals().filter(i => !shownOut.has(i)); if (left.length === 1) return rk(left[0]);   // one rival left: just their map
+  return trioFocus === 'both' || trioFocus === state?.seat || state?.captains?.[trioFocus]?.out != null || !state?.captains ? 'rivals' : rk(trioFocus); };   // what the camera frames   // what the camera frames
 function setTrioFocus(f) {
   trioFocus = f; if (f !== 'both') setAim(f, true);
   if (view !== 'target') slideTo('target'); else if (R3) R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
@@ -545,7 +549,7 @@ function setSize(n, players = 2) {
     const keys = layout === 3 ? ['home', 'ra', 'rb'] : ['home', 'target'];
     for (const v of keys) { const pl = planes[v] ||= {}; const cv = pl.cv ||= document.createElement('canvas'); cv.width = N * px; cv.height = HT * px; pl.ctx = cv.getContext('2d'); pl.sig = ''; }
     plane.w = N * px; plane.k = 1; plane.ctx = planes[keys[1]].ctx;
-    R3.setBoard(N, HT, Object.fromEntries(keys.map(k => [k, planes[k].cv])), layout === 3 ? {rivals: ['ra', 'rb']} : {duel: ['home', 'target']}); R3.focus(camKey(), 0, actKey()); layout3D(); drawPlane(); return;
+    R3.setBoard(N, HT, Object.fromEntries(keys.map(k => [k, planes[k].cv])), layout === 3 ? {rivals: ['ra', 'rb'], all: ['home', 'ra', 'rb'], 'home+ra': ['home', 'ra'], 'home+rb': ['home', 'rb']} : {duel: ['home', 'target']}); R3.focus(camKey(), 0, actKey()); layout3D(); drawPlane(); return;
   }
   sizePlane();
 }
@@ -687,6 +691,10 @@ const shipCache = new Map();   // key → signature, so a card is only touched w
 function clearShips() { shipCache.clear(); $('#board').querySelectorAll('.ship').forEach(e => e.remove()); }
 function render3D() {
   const items = [];
+  if (layout === 3 && state?.captains) {
+    if (!animating && !queue.length && syncOut() && view === 'target') R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
+    for (const i of rivals()) R3.setGone(rk(i), shownOut.has(i));
+  }
   const boardsNow = layout === 3 && state ? [['home', null], ['ra', rivals()[0]], ['rb', rivals()[1]]] : [['home', null], ['target', null]];
   for (const [bk, rs] of boardsNow) {
     const v = bk === 'home' ? 'home' : 'target', gather = fn => rs == null ? fn() : withAim(rs, fn);
@@ -700,8 +708,9 @@ function render3D() {
         const mf = (s.own ? state.me.manifest : state.opponent?.manifest)?.[s.id] || [];
         items.push({key: `${tag}:${s.id}`, board: bk, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
       }
-      (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${bk}:${cell}`, board: bk, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
+      if (!R3.isGone(bk)) (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${bk}:${cell}`, board: bk, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
     }
+    if (R3.isGone(bk)) { for (let j = items.length - 1; j >= 0 && items[j].board === bk; j--) items.pop(); return; }
     const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells, bk);
     });
   }
@@ -840,7 +849,7 @@ function preview(c) {
 // Fit the board into the free part of the screen (left of the side console on desktop, above the console on phones).
 function layout3D() {
   if (!R3) return; const side = matchMedia('(min-width:900px) and (min-aspect-ratio:1/1)').matches, dock = $('#dock');
-  const cap = $('#captains'), capBottom = cap && !cap.hidden ? cap.getBoundingClientRect().bottom - $('#sea').getBoundingClientRect().top + 6 : 0;   // 3 captains: frame the boards below the captain bubbles
+  const cap = $('#captains'), capBottom = cap && !cap.hidden ? (cap.classList.contains('float') ? 128 : cap.getBoundingClientRect().bottom - $('#sea').getBoundingClientRect().top + 6) : 0;   // 3 captains: room for the bubbles that float above each board
   R3.setInsets({top: Math.max(74, capBottom), left: 0, right: side ? dock.offsetWidth + 24 : 0, bottom: side ? 10 : dock.offsetHeight + 4});
 }
 
@@ -903,7 +912,7 @@ function aimAt(c) {
   if (settings.confirm && salvo() === 1) { targets.clear(); targets.add(c); audio.sound('select'); render(); return; }
   if (SECT() && targets.size >= need) { toast(`Queue full (${need}) — ENTER / TRANSMIT to send, ⌫ to drop the last one.`); audio.sound('error'); bump('#cta-fire'); return; }
   targets.add(c); audio.sound('packet');
-  if (SECT()) log(`armed ${coord(c)}  ${ip(c, true)}  ● READY  (${targets.size}/${need})`, 'event');
+  if (SECT()) log(`armed ${coord(c)}  ${ip(c, true)}  ● READY  (${queuedAll()}/${salvo()})`, 'event');
   if (targets.size >= need && !SECT()) { fireVolley(); return; }
   render();
 }
@@ -1113,6 +1122,7 @@ function takeGroup() { const a = queue.shift(), g = [a];
 async function playNext() {
   if (animating || !queue.length || !state) return;
   animating = true;
+  if (queue[0].round) { const r = queue.shift().round; try { await playRound3(r); } catch (e) { console.error(e); for (const a of r) (a.target === state.seat ? hidden.home : hk('t' + a.target)).delete(a.cell); } return playDone(); }
   if (trioOn() && queue[0].target !== state.seat && queue[0].target !== aimSeat) setAim(queue[0].target, true);
   const g = takeGroup(), a = g[0], incoming = trioOn() ? a.target === state.seat : a.seat !== state.seat, power = a.power;
   if (trioOn() && a.seat !== state.seat && a.target !== state.seat) log(`${ts()} ${state.captains[a.seat]?.name} → ${state.captains[a.target]?.name}: ${g.map(x => coord(x.cell, a.target).toLowerCase() + (x.hit ? ' 💥' : ' ·')).join('  ')}`, 'event');
@@ -1225,14 +1235,54 @@ async function playNext() {
     if (!incoming) { const hits = g.filter(x => x.hit).length; log(`--- ${power ? PI(power).label.toLowerCase() : 'ping'} statistics ---\n${g.length} packet${g.length > 1 ? 's' : ''} transmitted, ${hits} hit, ${Math.round((g.length - hits) / g.length * 100)}% packet loss`); }
     await sleep(fast ? 250 : 550);
   }
+  return playDone();
+}
+async function playDone() {
+  const fast = settings.fast;
   animating = false;
   if (!queue.length && state?.phase === 'playing') {
     await sleep(fast ? 200 : 400);
     const want = myTurn() || sdOn() ? 'target' : 'home'; if (view !== want) await slideTo(want);
-    else if (trioOn() && R3 && view === 'target' && R3.focusKey !== camKey()) await R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
+    else if (trioOn() && R3 && view === 'target' && R3.focusKey !== camKey()) await Promise.race([R3.focus(camKey(), settings.fast ? 320 : 560, actKey()), sleep(1000)]);
     if (myTurn()) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); log(`${ts()} ⏎ your turn · ${salvo()} ping${salvo() > 1 ? 's' : ''} · ${specList().filter(x => x.ok).map(x => PI(x.id).short.toLowerCase()).join(' ') || 'no specials ready'}`, 'event'); }
   }
   render(); if (sdIntro && !queue.length) showdownIntro(); playNext();
+}
+
+/* ---------------- 3 captains: a round, all at once (0.21.4) ----------------
+   Every captain's volley is in the air together: the camera frames all the boards still afloat, each captain's packets
+   leave their own board a beat apart and land where they were aimed. Marks appear as they land (one repaint per frame at
+   most), sounds are throttled, and the log gets one line per captain instead of one per shot. */
+const sfxLast = {};
+function sfx(name, quiet) { const t = performance.now(); if (t - (sfxLast[name] || 0) < 110) return; sfxLast[name] = t; audio.sound(name, quiet); }
+function syncOut() { const out = new Set(rivals().filter(i => state.captains[i]?.out != null)); if ([...out].join() === [...shownOut].join()) return false; shownOut = out; return true; }
+async function playRound3(list) {
+  const fast = settings.fast, me = state.seat, T = fast ? 750 : 1150, riv = rivals();
+  const live = riv.filter(i => !shownOut.has(i)), grp = live.length === 2 ? 'all' : live.length === 1 ? 'home+' + rk(live[0]) : 'home';
+  setTurnBanner(`📡 ROUND ${(list[0].turn ?? state.turn_number - 1) + 1} · everyone fires`, 'mine');
+  const seats = [...new Set(list.map(a => a.seat))].sort((a, b) => (a === me ? -1 : b === me ? 1 : a - b));
+  const name = i => i === me ? 'you' : state.captains[i]?.name || 'captain', color = i => i === me ? '#23e4d0' : ['#ff8a5c', '#d59bff'][riv.indexOf(i)] || '#ff8a5c';
+  for (const i of seats) { const mine = list.filter(a => a.seat === i);
+    log(`${ts()} ${name(i)} → ${mine.map(a => `${coord(a.cell, a.target).toLowerCase()}${a.hit ? (a.sunk ? ' ☠' : ' 💥') : ' ·'}`).join('  ')}`, i === me ? 'hit' : mine.some(a => a.target === me && a.hit) ? 'error' : 'event'); }
+  const cam = (k, ms) => Promise.race([R3.focus(k, ms, actKey()), sleep(ms + 400)]);   // another camera move can take over a glide: never wait on it forever
+  if (R3.focusKey !== grp) await cam(grp, fast ? 320 : 520);
+  let paint = 0; const repaint = () => { if (paint) return; paint = requestAnimationFrame(() => { paint = 0; renderBoard(); }); };
+  const flights = list.map(a => { const k = seats.indexOf(a.seat), j = list.filter(x => x.seat === a.seat).indexOf(a);
+    return sleep(k * (fast ? 90 : 160) + j * (fast ? 35 : 60)).then(() => {
+      if (j === 0) sfx(a.seat === me ? 'launch' : 'packet', a.seat !== me);
+      return Promise.race([R3.launch(a.cell, a.cell, {color: color(a.seat), dur: T / 1000, from: rk(a.seat), to: rk(a.target)}), sleep(T + 1200)]);
+    }).then(() => {
+      const key = rk(a.target), onMe = a.target === me; (onMe ? hidden.home : hk('t' + a.target)).delete(a.cell);
+      R3.splash(a.cell, a.hit ? (a.sunk ? 'sunk' : 'hit') : 'miss', key);
+      if (a.hit) { sfx(a.sunk ? 'sunk' : 'hit', onMe); if (!fast || a.sunk) fxText(R3.cellScreen(a.cell, key), a.sunk ? 'SUNK!' : onMe ? 'OUCH' : 'HIT', onMe ? '#ff8a5c' : '#ffd34d', a.sunk ? 20 : 15, 900); }
+      else sfx('miss', true);
+      repaint();
+    }); });
+  await Promise.all(flights);
+  for (const a of list.filter(a => a.sunk)) log(`☠ ${a.target === me ? 'your' : (state.captains[a.target]?.name || 'their') + '’s'} ${POD(a.sunk.id)} went down (${name(a.seat)})`, a.target === me ? 'error' : 'hit');
+  renderBoard(); await sleep(fast ? 350 : 750);
+  if (!queue.length && syncOut()) render();   // a captain went down: their board leaves now
+  if (R3.focusKey !== camKey()) await cam(camKey(), fast ? 320 : 560);
 }
 
 /* ---------------- idle life ---------------- */
@@ -1275,9 +1325,11 @@ function renderHud() {
   paintReplay();
   const four = trioOn(), riv = four ? rivals() : [], short = n => (n || '').replace(/^\S+\s/, '');
   $('#views').classList.toggle('four', four);
-  ['#view-ra', '#view-rb'].forEach((id, i) => { const b = $(id); b.hidden = !four; if (!four) return; const c = state.captains[riv[i]] || {};
-    b.textContent = `🎯 ${short(c.name) || 'rival'}`; b.title = c.name || ''; b.disabled = animating || c.empty || c.out != null; b.setAttribute('aria-selected', String(view === 'target' && trioFocus === riv[i])); });
-  $('#view-target').textContent = four ? '🎯🎯 both' : '🎯 enemy'; $('#view-target').setAttribute('aria-selected', String(view === 'target' && (!four || trioFocus === 'both'))); $('#view-target').disabled = animating;
+  const left = four ? riv.filter(i => !shownOut.has(i)) : [];
+  ['#view-ra', '#view-rb'].forEach((id, i) => { const b = $(id); b.hidden = !four || shownOut.has(riv[i]); if (b.hidden) return; const c = state.captains[riv[i]] || {}, n = queuedAt(riv[i]);
+    b.textContent = `🎯 ${short(c.name) || 'rival'}${n ? ` · ${n}` : ''}`; b.title = c.name || ''; b.disabled = animating || c.empty || c.out != null; b.setAttribute('aria-selected', String(view === 'target' && (trioFocus === riv[i] || left.length === 1))); });
+  $('#view-target').hidden = four && left.length < 2;
+  $('#view-target').textContent = four ? `🎯🎯 both${queuedAll() ? ` · ${queuedAll()}` : ''}` : '🎯 enemy'; $('#view-target').setAttribute('aria-selected', String(view === 'target' && (!four || trioFocus === 'both'))); $('#view-target').disabled = animating;
   $('#view-home').setAttribute('aria-selected', String(view === 'home')); $('#view-home').disabled = animating;
   const canNotify = 'Notification' in window && Notification.permission === 'default';
   let hint = '', ids = [], pulse = null;
@@ -1294,21 +1346,21 @@ function renderHud() {
     const claim = state.mode === 'multiplayer' && state.disconnect_seconds?.[1 - state.seat] >= state.forfeit_after;
     if (animating) hint = '📡 packets in flight…';
     else if (myTurn()) {
-      const need = salvo() - targets.size, pw = state.me.powers || {};
+      const need = salvo() - queuedAll(), pw = state.me.powers || {};
       if (armed) hint = `${PI(armed).emoji} ${PI(armed).own ? 'tap a square in YOUR waters' : 'tap enemy water'} to ${PI(armed).what}${armed === 'tail' ? ` (${tailVertical ? 'column' : 'row'})` : ''} · tap the button again to ${armed === 'tail' && !tailVertical ? 'turn it ↕' : 'cancel'}`;
-      else if (settings.confirm && salvo() === 1) hint = targets.size ? `locked on ${coord([...targets][0])} — PING!` : '🎯 tap a square in enemy waters, then PING';
-      else hint = salvo() > 1 ? (targets.size ? `🎯 ${need} more — or PING now` : `🎯 tap ${salvo()} squares in enemy waters`) : '🎯 tap a square in enemy waters to ping it';
-      ids = [...(SECT() && !touchLayout() ? ['keypad'] : []), ...(targets.size || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
+      else if (settings.confirm && salvo() === 1) hint = queuedAll() ? `locked on ${coord([...targets][0])} — PING!` : '🎯 tap a square in enemy waters, then PING';
+      else hint = salvo() > 1 ? (queuedAll() ? `🎯 ${need} more — or PING now` : `🎯 tap ${salvo()} squares in enemy waters`) : '🎯 tap a square in enemy waters to ping it';
+      ids = [...(SECT() && !touchLayout() ? ['keypad'] : []), ...(queuedAll() || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
       if (SECT() && !armed && touchLayout()) hint = need <= 0 ? '📡 queue full — tap TRANSMIT' : `👆 tap ${need} square${need === 1 ? '' : 's'} on the enemy map · pinch to zoom`;
       else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like ${SIZE === 9 ? "E5" : "J5"} · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${letters()[sel]} → now 1–9`;
-      pulse = targets.size && (need <= 0 || settings.confirm) ? 'cta-fire' : null;
-      $('#cta-fire').disabled = !targets.size;
+      pulse = queuedAll() && (need <= 0 || settings.confirm) ? 'cta-fire' : null;
+      $('#cta-fire').disabled = !queuedAll();
     } else { hint = state.mode === 'multiplayer' ? `${oppName()} is aiming · no time limit — come back anytime` : '🤖 the AI is aiming…'; if (canNotify && state.mode === 'multiplayer') ids = ['cta-notify']; }
     if (claim && !animating) ids.push('cta-forfeit');
   } else { hint = state.winner === state.seat ? 'deployment successful · again?' : 'this incident has been logged · rematch?'; ids = state.replay ? [] : ['cta-again', 'cta-replay', 'cta-share']; pulse = state.replay ? null : 'cta-again'; }
   $('#hint').textContent = hint ? '❯ ' + hint : ''; showCtas(ids, pulse); renderKeypad(ids.includes('keypad'));
-  $('#fire-label').textContent = SECT() ? `📡 TRANSMIT ${targets.size}/${salvo()}${touchLayout() ? '' : ' ⏎'}` : salvo() > 1 ? `📡 PING ${targets.size}/${salvo()}` : '📡 PING';
-  $('#fire-cmd').textContent = `$ ping ${[...targets].map(c => lc(c)).join(' ') || '—'}`;
+  $('#fire-label').textContent = SECT() ? `📡 TRANSMIT ${queuedAll()}/${salvo()}${touchLayout() ? '' : ' ⏎'}` : salvo() > 1 ? `📡 PING ${queuedAll()}/${salvo()}` : '📡 PING';
+  $('#fire-cmd').textContent = `$ ping ${(trioOn() ? [...new Map([...volley, [aimSeat, targets]])].flatMap(([i, set]) => [...set].map(c => coord(c, i).toLowerCase())) : [...targets].map(c => lc(c))).join(' ') || '—'}`;   // 3 captains: every queued shot, both maps
   renderSpecials(ids.includes('specials'));
   document.querySelectorAll('[data-rules]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rules === chosenRules)));
   $('#cta-ready').disabled = !state || state.me.ships.length !== FLEET.length || state.me.ready || !connected;
@@ -1356,8 +1408,8 @@ function renderKeypad(on) {
   $('#kp-head').textContent = sel < 0 ? `k8s.production · ${armed ? PI(armed).label + ' · ' : ''}pick a SECTOR` : `SECTOR ${letters()[sel]} · ${subnet(sel)} · pick 1–9`;
   $('#kp-cluster').textContent = `docker.local · nodes ${pods}/${FLEET.length} Ready · ⚡ ${salvo()} packet${salvo() > 1 ? 's' : ''}`;
   const grid = $('#kp-grid'), mode = sel < 0 ? 'letters' : 'digits';
-  if (grid.dataset.mode !== mode || grid.dataset.n !== String(NSEC())) {
-    grid.dataset.mode = mode; grid.dataset.n = NSEC(); grid.style.setProperty('--cols', mode === 'letters' ? SC() : 3);
+  if (grid.dataset.mode !== mode || grid.dataset.n !== String(NSEC()) || grid.dataset.l !== letters()) {   // 3 captains: each rival's map has its own letters
+    grid.dataset.mode = mode; grid.dataset.n = NSEC(); grid.dataset.l = letters(); grid.style.setProperty('--cols', mode === 'letters' ? SC() : 3);
     grid.replaceChildren(...(mode === 'letters' ? letters().slice(0, NSEC()).split('').map((L, i) => Object.assign(document.createElement('button'), {type: 'button', className: 'kl', onclick: () => selectSector(i), innerHTML: `<b>${L}</b><i></i>`}))
       : [1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => Object.assign(document.createElement('button'), {type: 'button', className: 'kd', onclick: () => keypad(k), innerHTML: `<b>${k}</b><i></i>`}))));
   }
@@ -1387,6 +1439,11 @@ const EV_TIP = {
   roledown: 'Every creature runs part of the stack. Lose one and the abilities it powers go with it.',
 };
 function showEvent(ev) {
+  if (trioOn()) {   // 3 captains play classic rules: the only event that matters is a captain going down
+    if (ev.kind !== 'out') return;
+    const me = ev.seat === state.seat, txt = me ? '☠ Your whole fleet is on the bottom — you can watch the rest.' : `☠ ${state.captains[ev.seat]?.name || 'A captain'} is out${ev.reason ? ' (left)' : ''} — their map leaves the ocean.`;
+    log(txt, me ? 'error' : 'hit'); toast(txt); audio.sound(me ? 'error' : 'join'); return;
+  }
   const mine = ev.seat === state?.seat, who = mine ? 'your cluster' : `${oppName()}’s cluster`, at = ev.cell != null ? ' @ ' + coord(ev.cell) : '';
   const txt = {
     roledown: mine ? `⚠ your ${ev.role} is down — ${ROLE_FX[ev.role]}` : `✔ enemy ${ev.role} down — ${ev.role === 'squid' ? 'their proxy is gone: your masked scans are now exact' : ROLE_FX[ev.role].replace(/^[^(]*/, m => 'their ' + m)}`,
@@ -1504,28 +1561,52 @@ function renderResult() {
   if (!settings.reduced) { const set = won ? ['🎉', '🐳', '📦', '⭐', '🚀'] : ['💀', '📦', '🔥', '⚠️']; for (let i = 0; i < 18; i++) fxBurst({x: FX.w * (.05 + Math.random() * .9), y: FX.h * (.1 + Math.random() * .6)}, set[i % set.length], 30, 1100, i * 70); }
 }
 function render() { renderBoard(); paintBanner(); renderHud(); renderTitle(); renderWatch(); renderResult(); paintCaptains(); }
+let capSig = '';
 function paintCaptains() {
   const bar = $('#captains'); if (!bar) return;
-  if (!trioOn()) { bar.hidden = true; return; }
-  bar.hidden = false;
+  if (!trioOn()) { bar.hidden = true; capSig = ''; return; }
+  bar.hidden = false; bar.classList.toggle('float', !!R3);
   const span = s => state.labels[s][0] + '–' + state.labels[s][8], mine = deviceSeats[state.id] || {};
-  const chip = (i, label, on, click, extra = '') => { const b = document.createElement('button'); b.type = 'button'; b.className = 'cap' + (on ? ' on' : '') + extra; b.innerHTML = label; b.onclick = click; return b; };
-  const kids = [chip(state.seat, `🌊 <b>You</b><small>${span(state.seat)}${state.me.out != null ? ' · ☠ out' : state.me.fired ? ' · ✓ fired' : ''}</small>`, view === 'home', () => slideTo('home'))];
+  const chip = (act, seat, label, on, extra = '') => `<button type="button" class="cap${on ? ' on' : ''}${extra}" data-act="${act}" data-seat="${seat}">${label}</button>`;
+  const groups = [['home', chip('home', state.seat, `🌊 <b>You</b><small>${span(state.seat)}${state.me.out != null ? ' · ☠ out' : state.me.fired ? ' · ✓ fired' : ''}</small>`, view === 'home')]];
   for (const i of [0, 1, 2]) {
     if (i === state.seat) continue;
-    const c = state.captains[i];
-    if (c.empty) {
-      if (state.seat === 0 && state.phase === 'lobby') kids.push(chip(i, `➕ <b>Seat ${i + 1}</b><small>link · 🤖 CPU · 🛋️ here</small>`, false, () => { const k = $('#seat-fill'); k.dataset.seat = i; k.showModal(); }, ' empty'));
-      else kids.push(chip(i, `⏳ <b>Seat ${i + 1}</b><small>waiting for a captain</small>`, false, () => openShare(), ' empty'));
-      continue;
+    const c = state.captains[i]; let h;
+    if (shownOut.has(i)) continue;   // sunk: their board has left the ocean, and so has their bubble
+    if (c.empty) h = state.seat === 0 && state.phase === 'lobby' ? chip('fill', i, `➕ <b>Seat ${i + 1}</b><small>link · 🤖 CPU · 🛋️ here</small>`, false, ' empty') : chip('share', i, `⏳ <b>Seat ${i + 1}</b><small>waiting for a captain</small>`, false, ' empty');
+    else {
+      const n = queuedAt(i), st = c.out != null ? '☠ out' : state.phase === 'playing' ? (c.fired ? '✓ fired' : c.ai ? '🤖 aiming' : '⏳ aiming') : c.ready ? '✓ ready' : '⚓ deploying';
+      h = chip('aim', i, `${c.ai ? '🤖' : c.local ? '🛋️' : '⚓'} <b>${esc(c.name)}</b><small>${span(i)} · ${st}${n ? ` · 🎯 ${n}` : ''}</small>`, view !== 'home' && aimSeat === i, c.out != null ? ' out' : '');
+      if (mine[i] != null) h += chip('pass', i, `🔁 <small>pass to ${esc(c.name)}</small>`, false, ' pass');
     }
-    const n = (volley.get(i)?.size || 0) + (i === aimSeat ? targets.size : 0) - (i === aimSeat && volley.has(i) ? volley.get(i).size : 0);
-    const st = c.out != null ? '☠ out' : state.phase === 'playing' ? (c.fired ? '✓ fired' : c.ai ? '🤖 aiming' : '⏳ aiming') : c.ready ? '✓ ready' : '⚓ deploying';
-    kids.push(chip(i, `${c.ai ? '🤖' : c.local ? '🛋️' : '⚓'} <b>${esc(c.name)}</b><small>${span(i)} · ${st}${n ? ` · ${n} queued` : ''}</small>`, view !== 'home' && aimSeat === i, () => { setAim(i); if (view !== 'target') slideTo('target'); }, c.out != null ? ' out' : ''));
-    if (mine[i] != null && i !== state.seat) kids.push(chip(i, `🔁 <small>pass to ${esc(c.name)}</small>`, false, () => passTo(i), ' pass'));
+    groups.push([rk(i), h]);
   }
-  bar.replaceChildren(...kids);
+  const html = groups.map(([k, h]) => `<div class="capgrp" data-key="${k}">${h}</div>`).join('');
+  if (html !== capSig) { capSig = html; bar.innerHTML = html; }
+  placeBubbles();
 }
+const queuedAt = i => i === aimSeat ? targets.size : volley.get(i)?.size || 0;
+$('#captains').addEventListener('click', e => {
+  const b = e.target.closest('.cap'); if (!b || !state) return; const i = Number(b.dataset.seat);
+  if (b.dataset.act === 'home') slideTo('home');
+  else if (b.dataset.act === 'aim') { setAim(i); if (view !== 'target') slideTo('target'); }
+  else if (b.dataset.act === 'fill') { const k = $('#seat-fill'); k.dataset.seat = i; k.showModal(); }
+  else if (b.dataset.act === 'share') openShare();
+  else if (b.dataset.act === 'pass') passTo(i);
+});
+// each board's bubble rides above its top corner, following the camera (only touches the DOM when it moved)
+const bubbleAt = new Map();
+function placeBubbles() {
+  const bar = $('#captains'); if (!R3 || bar.hidden || !bar.classList.contains('float')) return;
+  const w = bar.clientWidth, h = bar.clientHeight;
+  for (const g of bar.children) {
+    const t = R3.boardTop(g.dataset.key); if (!t) { g.hidden = true; continue; }
+    const half = g.offsetWidth / 2, x = Math.round(Math.max(half + 6, Math.min(w - half - 6, t.x))), y = Math.round(Math.max(g.offsetHeight + 58, Math.min(h - 8, t.y - 6)));
+    const off = t.x < -40 || t.x > w + 40 || t.y < 30 || t.y > h + 40; g.hidden = off;
+    const k = x + ',' + y; if (bubbleAt.get(g) === k) continue; bubbleAt.set(g, k); g.style.left = x + 'px'; g.style.top = y + 'px';
+  }
+}
+(function bubbleLoop() { if (trioOn() && R3 && !document.hidden) placeBubbles(); requestAnimationFrame(bubbleLoop); })();
 const esc = t => String(t).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[ch]);
 
 /* ---------------- notifications ---------------- */
@@ -1799,17 +1880,17 @@ document.addEventListener('keydown', e => {
     const li = /^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)) ? LETTERS.indexOf(k.toUpperCase()) : -1;
     if (li >= 0 && li < NSEC()) { e.preventDefault(); if (view !== 'target' && !(armed && PI(armed).own)) slideTo('target'); selectSector(li); return; }
     if (/^[1-9]$/.test(k)) { e.preventDefault(); keypad(Number(k)); return; }
-    if (k === 'enter') { e.preventDefault(); if (targets.size) fireVolley(); return; }
+    if (k === 'enter') { e.preventDefault(); if (queuedAll()) fireVolley(); return; }
     if (k === 'backspace') { e.preventDefault(); backspace(); return; }
     if (k === 'escape' && sel >= 0) { e.preventDefault(); sel = -1; render(); return; }
     if (k === ' ' && armed && PI(armed).rot) { e.preventDefault(); rotN = (rotN + 1) & 3; if (hover >= 0) preview(hover); render(); return; }
-    if (k === ' ') { e.preventDefault(); if (targets.size) fireVolley(); return; }   // Space or Enter transmits
+    if (k === ' ') { e.preventDefault(); if (queuedAll()) fireVolley(); return; }   // Space or Enter transmits
   }
   if (k === ' ' && armed && PI(armed).rot) { e.preventDefault(); rotN = (rotN + 1) & 3; if (hover >= 0) preview(hover); render(); return; }
   if (k === 'r' && deploying() && !state.me.ready && held != null) { e.preventDefault(); rotateShip(held); }
   else if (k === 'r' && armed === 'tail') { tailVertical = !tailVertical; if (hover >= 0) preview(hover); render(); }
   else if (k === 'escape') { held = null; armed = null; targets.clear(); area = []; openTerminal(false); render(); }
-  else if ((k === 'f' || k === ' ' || k === 'enter') && targets.size && myTurn()) { e.preventDefault(); fireVolley(); }
+  else if ((k === 'f' || k === ' ' || k === 'enter') && queuedAll() && myTurn()) { e.preventDefault(); fireVolley(); }
   else if (k === 'v' && state?.phase === 'playing') slideTo(view === 'target' ? 'home' : 'target');
   else if (k === '+' || k === '=') setZoom(zoom.z * 1.3, 0, 0, true); else if (k === '-') setZoom(zoom.z / 1.3, 0, 0, true); else if (k === '0') autoZoom();
 });

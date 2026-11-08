@@ -479,3 +479,19 @@ body.switching #sea { opacity: .15; }
 #tab-2p[hidden],#tab-3p[hidden]{display:none}
 .trio-grid{grid-template-columns:1fr}.trio-grid .big{min-height:62px}
 #tab-3p .trio-head{margin-top:4px}
+
+/* 0.21.4 · 3 captains on the 3D ocean: each captain's bubble floats above their own board (placed by placeBubbles) */
+.captains.float{inset:0;top:0;left:0;transform:none;max-width:none;display:block;pointer-events:none;z-index:5}
+.captains .capgrp{display:contents}
+.captains.float .capgrp{position:absolute;display:flex;gap:4px;align-items:flex-end;transform:translate(-50%,-100%);pointer-events:auto;white-space:nowrap}
+.captains.float .capgrp[hidden]{display:none}
+.captains.float .cap{position:relative}
+.captains.float .cap::after{content:'';position:absolute;left:50%;bottom:-9px;margin-left:-7px;border:7px solid transparent;border-top-color:#04121c;border-bottom:0}
+.captains.float .cap.pass::after{display:none}
+@media (max-width:700px){.captains.float .cap{padding:4px 8px}.captains.float .cap b{font-size:12px;max-width:10ch}.captains.float .cap small{font-size:10px}}
+/* the map picker as a vertical list in 3-captain games */
+.views.four{flex-direction:column;align-items:stretch;border-radius:16px;gap:2px}
+.views.four button{border-radius:12px;text-align:left;max-width:20ch}
+.views.four button[hidden]{display:none}
+.sea:has(.views.four) .zoom-ctl{top:236px}
+@media (max-width:700px){.views.four button{max-width:16ch;min-height:32px;font-size:.66rem}.sea:has(.views.four) .zoom-ctl{top:216px}}

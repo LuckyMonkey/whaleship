@@ -104,6 +104,33 @@ function cardSvg(info) {
       chips([[BOARD[board], '#e9f8ff'], [modeName, modeCol]], L, 410) +
       cta('JUMP INTO THE BATTLE', L, 476);
     say = 'glub glub… FIRE!';
+  } else if (info.kind === 'trio-invite') {
+    const name = tidy(info.a), open = info.open || 1;
+    body = sticker('3-CAPTAIN BATTLE!', L, 118, '#ffd34d') +
+      H(name, L, 262, fit(name, W, 84, .5)) +
+      T(open > 1 ? 'needs two more captains. Grab a seat!' : `and ${tidy(info.b, 18)} need a third captain.`, L, 312, fit('and ' + tidy(info.b, 18) + ' need a third captain.', W, 36, .52)) +
+      chips([['3 CAPTAINS · 3 MAPS', '#ffd34d'], ['QUICK · EVERYONE FIRES AT ONCE', '#e9f8ff']], L, 346) +
+      cta('TAKE A SEAT', L, 432, 'free · no account · no install · works on your phone');
+    say = 'three-way brawl!';
+  } else if (info.kind === 'trio-battle') {
+    const ns = info.names.map(n => tidy(n, 16)), size = Math.min(...ns.map(n => fit(n, 420, 50, .5)));
+    body = sticker(`3-CAPTAIN BATTLE · ROUND ${info.turn || 1}`, L, 104, '#23e4d0') +
+      ns.map((n, i) => H(n, L, 214 + i * 86, size, info.out[i] ? '#8aa3b3' : '#fff') + pips(info.fleet, info.sunk[i], L + 4, 230 + i * 86) +
+        (info.out[i] ? sticker('SUNK', L + 470, 180 + i * 86, '#ff5a36', '#fff', -6, 26) : '')).join('') +
+      cta('JUMP INTO THE BATTLE', L, 470);
+    say = 'everyone fire!';
+  } else if (info.kind === 'trio-result') {
+    const w = tidy(info.winner, 18), rest = info.losers.map(n => tidy(n, 14)).join(' and ');
+    body = sticker('LAST FLEET AFLOAT!', L, 118, '#ffd34d') +
+      H(w + ' wins!', L, 262, fit(w + ' wins!', W, 84, .5), '#ffd34d') +
+      T(`sank ${rest} in ${info.turn} rounds`, L, 314, fit(`sank ${rest} in ${info.turn} rounds`, W, 34, .52)) +
+      chips([['3 CAPTAINS', '#ffd34d'], [`${info.turn} ROUNDS`, '#e9f8ff'], [`${info.hits} HITS`, '#ff754f', '#fff']], L, 346) +
+      cta('THINK YOU CAN DO BETTER?', L, 432, 'play free · 3 captains, or 1-on-1');
+    say = 'gg! rematch?'; mood = 'dizzy';
+  } else if (info.kind === 'trio-draw') {
+    body = sticker('3-CAPTAIN BATTLE', L, 118, '#ffd34d') + H('Nobody survived!', L, 262, 80) +
+      T(info.names.map(n => tidy(n, 14)).join(', ') + ': all sunk in the same round', L, 314, 30) + cta('PLAY AGAIN', L, 432);
+    say = 'glub…'; mood = 'dizzy';
   } else if (info.kind === 'result') {
     const w = tidy(info.winner, 18), l = tidy(info.loser, 20), acc = info.shots ? Math.round(100 * info.hits / info.shots) : 0;
     body = `<g transform="translate(${L + 330} 74) rotate(-7)" opacity=".92"><rect width="300" height="62" rx="10" fill="none" stroke="#ff5a36" stroke-width="6"/><rect x="8" y="8" width="284" height="46" rx="6" fill="none" stroke="#ff5a36" stroke-width="2"/><text x="150" y="44" text-anchor="middle" font-family="Lilita One" font-size="32" fill="#ff5a36">INCIDENT REPORT</text></g>` +

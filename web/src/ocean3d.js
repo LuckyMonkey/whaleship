@@ -408,7 +408,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   }
   // glowing network packets that arc over the water, with a light trail (pooled)
   const glowTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, '#ffffffff'); r.addColorStop(.25, '#ffffffaa'); r.addColorStop(1, '#ffffff00'); g.fillStyle = r; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
-  const TR = 26, packets = Array.from({length: 8}, () => {
+  const TR = 26, packets = Array.from({length: 24}, () => {   // 24: a 3-captain round has every volley in the air at once
     const g = new THREE.Group(), core = new THREE.Mesh(new THREE.BoxGeometry(.17, .17, .17), new THREE.MeshStandardMaterial({color: '#23e4d0', emissive: '#23e4d0', emissiveIntensity: 2.2}));
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({map: glowTex, color: '#23e4d0', blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false})); glow.scale.setScalar(1.1); g.add(core, glow);
     const tg = new THREE.BufferGeometry(), tp = new Float32Array(TR * 3); tg.setAttribute('position', new THREE.BufferAttribute(tp, 3));
@@ -510,6 +510,17 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     },
     boardDirty(key) { for (const [k, b] of boards) if (!key || k === key) b.tex.needsUpdate = true; },
     get active() { return active; },
+    // a captain who is out (3 captains): their board leaves the ocean - mesh, ship and calm water - until the next setBoard
+    setGone(key, gone) { const b = boards.get(key); if (!b || !!b.gone === !!gone) return; b.gone = !!gone; b.mesh.visible = !gone;
+      cruisers.forEach(c => { if (c.board === key) c.m.visible = !gone; });
+      const keys = [...boards.keys()], vis = keys.filter(k => !boards.get(k).gone), r = k => { const o = off(k); return [o.x - N / 2, o.z - HT / 2, o.x + N / 2, o.z + HT / 2]; };
+      [oceanMat.uniforms.uBoard, oceanMat.uniforms.uBoard2, oceanMat.uniforms.uBoard3].forEach((u, i) => { const k = keys[Math.min(i, keys.length - 1)]; u.value.set(...r(boards.get(k).gone ? vis[0] : k)); });
+      if (gone) this.setFires([], [], key); },
+    isGone(key) { return !!boards.get(key)?.gone; },
+    // where a board's top corner is on screen (for the captain bubbles above each board)
+    boardTop(key) { const b = boards.get(key); if (!b) return null; let best = null;
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) { const v = new THREE.Vector3(b.off.x + dx * N / 2, .1, b.off.z + dz * HT / 2).project(camera); if (!best || v.y > best.y) best = v; }
+      return {x: (best.x + 1) / 2 * canvas.clientWidth, y: (1 - best.y) / 2 * canvas.clientHeight}; },
     // swing the camera to a board: ease in-out with a slight zoom-out midway, resolves when it lands
     focus(key, ms = 700, act = null) {
       if (!boards.has(key) && !groups.has(key)) return Promise.resolve();
@@ -523,7 +534,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     get focusKey() { return focusKey; },
     // which board (and cell) is under the pointer - the inactive one too, so a tap on it can bring it into focus
     pickAny(cx, cy) { setRay(cx, cy); if (!ray.ray.intersectPlane(ground, hit)) return null;
-      for (const [key, b] of boards) { const q = Math.floor(hit.x - b.off.x + N / 2), r = Math.floor(hit.z - b.off.z + HT / 2); if (q >= 0 && r >= 0 && q < N && r < HT) return {key, cell: r * N + q}; } return null; },
+      for (const [key, b] of boards) { if (b.gone) continue; const q = Math.floor(hit.x - b.off.x + N / 2), r = Math.floor(hit.z - b.off.z + HT / 2); if (q >= 0 && r >= 0 && q < N && r < HT) return {key, cell: r * N + q}; } return null; },
     // pixel offset (px, py) and zoom z, same semantics as the 2D renderer's pan/zoom state
     setInsets(v) { insets = {...insets, ...v}; resize(); },
     setZoomPan(z, px, py, smooth) {
@@ -575,7 +586,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     },
     // fire a glowing packet from one cell to another; resolves on impact
     launch(fromCell, toCell, {color = '#23e4d0', dur = 1.4, from: fk = active, to: tk = active} = {}) {
-      return new Promise(resolve => { const p = packets.find(p => p.t >= 2) || packets[0];
+      return new Promise(resolve => { const p = packets.find(p => p.t >= 2) || packets.reduce((a, b) => b.t > a.t ? b : a); p.done?.();   // pool exhausted: land the oldest at once so nobody waits on it forever
         const a = cellAt(fromCell, fk), b = cellAt(toCell, tk);
         p.from.copy(a); p.to.copy(b); p.h = Math.min(fk === tk ? 6 : 9, 1.6 + a.distanceTo(b) * .32); p.dur = dur; p.t = 0; p.n = 0; p.done = resolve;
         p.core.material.color.set(color); p.core.material.emissive.set(color); p.glow.material.color.set(color); p.trail.material.color.set(color); p.trail.material.opacity = .85; p.g.visible = p.trail.visible = true; });

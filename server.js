@@ -961,6 +961,16 @@ function cardInfo(m, allowSolo) {
   if (!m) return { kind: 'default', board: 'full', rules: 'warfare' };
   const base = { board: m.size === 9 ? 'quick' : 'full', rules: RULE_LABEL[m.rules] ? m.rules : 'warfare', turn: m.turn_number || 0 };
   const sunk = st => st ? st.ships.filter(sh => isSunk(st, sh)).length : 0, [a, b] = m.seats;
+  if (trio(m)) {   // 3 captains (v0.21.4): their own cards
+    const names = m.seats.map((x, i) => x?.name || `Seat ${i + 1}`);
+    if (m.phase === 'lobby') { const here = m.seats.filter(Boolean); return { ...base, kind: 'trio-invite', a: here[0]?.name, b: here[1]?.name, open: 3 - here.length }; }
+    if (m.phase === 'finished') {
+      if (m.winner == null || !m.seats[m.winner]) return { ...base, kind: 'trio-draw', names };
+      const shots = m.attacks.filter(x => x.seat === m.winner && !x.reveal);
+      return { ...base, kind: 'trio-result', winner: names[m.winner], losers: names.filter((_, i) => i !== m.winner), hits: shots.filter(x => x.hit).length };
+    }
+    return { ...base, kind: 'trio-battle', names, fleet: m.fleet.length, sunk: m.seats.map(sunk), out: m.seats.map(x => x?.out != null) };
+  }
   if (m.phase === 'finished' && m.seats[m.winner] && (allowSolo || m.mode === 'multiplayer')) {
     const shots = m.attacks.filter(x => x.seat === m.winner && !x.reveal);
     return { ...base, kind: 'result', winner: m.seats[m.winner].name, loser: m.seats[1 - m.winner]?.name, shots: shots.length, hits: shots.filter(x => x.hit).length };
@@ -971,6 +981,10 @@ function cardInfo(m, allowSolo) {
 }
 function cardText(info) {
   const board = info.board === 'quick' ? '⚡ Quick (9 sectors, ~5 min)' : '🌊 Full (36 sectors)', mode = RULE_LABEL[info.rules];
+  if (info.kind === 'trio-invite') return [`⚓ ${info.a} started a 3-captain WHALESHIP battle!`, `${info.open > 1 ? 'Two seats' : 'One seat'} open · three maps, everyone fires at once. Tap to take a seat — free, no account, no install.`];
+  if (info.kind === 'trio-battle') return [`⚔️ ${info.names.join(' vs ')} — WHALESHIP, round ${info.turn || 1}`, `${info.names.map((n, i) => `${n} ${info.fleet - info.sunk[i]}`).join(' · ')} vessels afloat. Tap to jump into the battle.`];
+  if (info.kind === 'trio-result') return [`🏆 ${info.winner} won a 3-captain WHALESHIP battle!`, `Last fleet afloat after ${info.turn} rounds against ${info.losers.join(' and ')}. Think you can do better? Play free.`];
+  if (info.kind === 'trio-draw') return ['💥 A 3-captain WHALESHIP battle with no survivors', 'Every fleet went down in the same round. Play free.'];
   if (info.kind === 'invite') return [`⚓ ${info.a} challenges you to WHALESHIP!`, `${board} · ${mode}. Tap to accept and fire back — free, no account, no install.`];
   if (info.kind === 'battle') return [`⚔️ ${info.a} vs ${info.b} — WHALESHIP, turn ${info.turn || 1}`, `${info.fleet - info.sunkA} vs ${info.fleet - info.sunkB} vessels afloat · ${board} · ${mode}. Tap to jump into the battle.`];
   if (info.kind === 'result') return [`🏆 ${info.winner} won a WHALESHIP battle!`, `Sank ${info.loser}'s entire stack in ${info.turn} turns (${info.shots ? Math.round(100 * info.hits / info.shots) : 0}% accuracy). Think you can do better? Play free.`];
@@ -981,7 +995,7 @@ function previewPage(req, url) {
   indexHtml ??= fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').replaceAll('__BUILD__', BUILD);
   const origin = ORIGINS[0] || `https://${req.headers.host}`, j = url.searchParams.get('j') || '', r = url.searchParams.get('r') || '', key = j || r;
   const m = matchFromShort(key), info = cardInfo(m, !!r), [title, desc] = cardText(info);
-  const ver = m ? `${m.phase}.${m.turn_number || 0}.${m.seats[1] ? 2 : 1}` : 'x';
+  const ver = m ? `${m.phase}.${m.turn_number || 0}.${m.seats.filter(Boolean).length}` : 'x';
   const img = `${origin}${BASE}/og/${m ? key : 'default'}.jpg?s=${ver}${BUILD !== 'dev' ? '.' + BUILD : ''}`;
   const pageUrl = `${origin}${BASE}/${m ? (r ? '?r=' : '?j=') + key : ''}`;
   const tags = `<meta property="og:type" content="website"><meta property="og:site_name" content="WHALESHIP"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(pageUrl)}"><meta property="og:image" content="${esc(img)}"><meta property="og:image:type" content="image/jpeg"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="${esc(title)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${esc(title)}"><meta name="twitter:description" content="${esc(desc)}"><meta name="twitter:image" content="${esc(img)}">`;

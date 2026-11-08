@@ -1,6 +1,6 @@
 {
   "name": "whaleship",
-  "version": "0.21.3",
+  "version": "0.21.4",
   "private": true,
   "main": "server.js",
   "license": "MIT",
