@@ -14,6 +14,9 @@
   lobby with a link, a CPU or a local captain.
 - **Captains bar** over the map: who is aiming, who has fired, how many creatures each has left, and a **🔁 pass**
   chip for captains sharing your device.
+- **Attract mode:** leave the home screen alone for a minute and a CPU-vs-CPU quick battle plays behind it (silently,
+  never saved or scored). Any tap or key brings the menu straight back, without starting a game; it also leaves by
+  itself when the battle ends or after four minutes.
 
 ## 0.19.0 — 2026-11-07
 

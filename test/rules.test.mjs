@@ -381,3 +381,22 @@ test('3 captains: an invite holder and a second captain on the host\'s device; t
   assert.equal(host.st.phase, 'playing'); assert.notEqual(host.st.captains[2].out, null);
   for (const x of [host, sofa, guest]) x.close();
 });
+
+test('attract mode: a CPU-vs-CPU demo on one socket, paced by the client, never saved, listed or scored', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ws-demo-')), port = PORT + 3, srv = await bootServer(dir, port);
+  try {
+    const c = clientAt(port); await c.open;
+    let r = await c.send({ type: 'DEMO' }); assert.equal(r.type, 'DEMO_STATE');
+    assert.equal(r.state.demo, true); assert.equal(r.state.phase, 'playing'); assert.equal(r.state.size, 9); assert.equal(r.state.names.length, 2);
+    let st = r.state, steps = 0;
+    const fast = await c.send({ type: 'DEMO_STEP' }); assert.equal(fast.state.attacks.length > 0, true);
+    while (st.phase === 'playing' && steps++ < 130) { await new Promise(r => setTimeout(r, 610)); st = (await c.send({ type: 'DEMO_STEP' })).state; }
+    assert.equal(st.phase, 'finished'); assert.ok(st.winner === 0 || st.winner === 1);
+    const other = clientAt(port); await other.open; const mine = await other.send({ type: 'LIST_MATCHES', matches: [{ session: st.id, credential: 'x' }] });
+    assert.ok(!(mine.matches || []).length, 'not listed');
+    const bad = await c.send({ type: 'FIRE', session: st.id, cells: [0] }); assert.ok(bad.error, 'a demo takes no orders');
+    await new Promise(r => setTimeout(r, 400)); c.close(); other.close();
+    assert.deepEqual(execFileSync('ls', [path.join(dir, 'matches')]).toString().trim(), '', 'nothing saved');
+    assert.throws(() => readFileSync(path.join(dir, 'results.jsonl')), 'nothing scored');
+  } finally { await stop(srv); rmSync(dir, { recursive: true, force: true }); }
+});

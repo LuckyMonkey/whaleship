@@ -752,6 +752,31 @@ function aiTurn(m, s) {
   if (cells.length) fire(m, s, { type: 'FIRE', cells });
 }
 
+/* ---------------- attract mode (v0.20): CPU vs CPU behind the home screen ----------------
+   A browser left idle on the home screen asks for a demo battle. It lives only on that socket: never saved, listed,
+   counted against MAX_ACTIVE or scored. The client paces it (DEMO_STEP after each turn has played out) and drops it
+   (DEMO_STOP) on the first touch. */
+const DEMO_GAP = 600, DEMO_TURNS = 120;
+let demoCount = 0;
+function demoView(ws) { const v = view(ws.demo, 0); v.demo = true; v.names = ws.demo.seats.map(x => x.name); return v; }
+function demoStart(ws) {
+  if (ws.demo || demoCount >= 200) return;
+  const size = 9, m = { v: SCHEMA, pace: PACE, rules: 'classic', firewalls: [], events: [], manifest: null, id: rid(16), mode: 'demo', size, fleet: fleetFor(size), phase: 'playing', revision: 1,
+    turn: crypto.randomInt(2), turn_number: 0, winner: null, reason: null, score_saved: true, created: Math.floor(now() / 1000), started: Math.floor(now() / 1000), finished: null, attacks: [], seats: [null, null] };
+  [['🐋 Whale AI', 'hard'], ['🦭 Walrus AI', 'normal']].forEach(([name, lvl], i) => { const x = newSeat('ai:' + lvl, name, m, lvl); x.ships = randomFleet(size, m.fleet, m.firewalls); x.ready = true; m.seats[i] = x; });
+  if (crypto.randomInt(2)) m.seats.reverse();
+  ws.demo = m; ws.demoAt = 0; demoCount++;
+  send(ws, { type: 'DEMO_STATE', state: demoView(ws) });
+}
+function demoStep(ws) {
+  const m = ws.demo; if (!m || m.phase !== 'playing' || now() - ws.demoAt < DEMO_GAP) return;
+  ws.demoAt = now(); const s = m.turn;
+  strike(m, s, aiTargets(m, s, salvoFor(m, s))); endTurn(m, s);
+  if (m.phase === 'playing' && m.turn_number >= DEMO_TURNS) { m.phase = 'finished'; m.winner = null; m.reason = 'demo'; }
+  m.revision++; send(ws, { type: 'DEMO_STATE', state: demoView(ws) });
+}
+function demoStop(ws) { if (ws.demo) { ws.demo = null; demoCount--; } }
+
 /* ---------------- message handling ---------------- */
 function handle(ws, raw) {
   let msg; try { msg = JSON.parse(raw); } catch { return; }
@@ -763,6 +788,9 @@ function handle(ws, raw) {
   if (msg.type === 'END_MATCH') return endMatch(ws, msg);
   if (msg.type === 'MY_MATCHES') return myMatches(ws);
   if (msg.type === 'PUSH_SUBSCRIBE') return pushSubscribe(ws, msg);
+  if (msg.type === 'DEMO') return demoStart(ws);
+  if (msg.type === 'DEMO_STEP') return demoStep(ws);
+  if (msg.type === 'DEMO_STOP') return demoStop(ws);
   const m = matches.get(ws.matchId);
   if (!m || ws.seat == null || msg.session !== m.id) return send(ws, { error: 'Not in a match.' });
   const s = ws.seat, me = m.seats[s], before = { phase: m.phase, turn: m.turn, opp: !!m.seats[1] };
@@ -923,7 +951,7 @@ server.on('upgrade', async (req, socket, head) => {
       if (ws.tokens < 1) return send(ws, { error: 'Slow down, captain.' }); ws.tokens--;
       try { handle(ws, data); } catch (e) { console.error('handle', e); send(ws, { error: 'Something went wrong. Try again.' }); }
     });
-    ws.on('close', () => detach(ws));
+    ws.on('close', () => { demoStop(ws); detach(ws); });
     send(ws, { type: 'CONNECTED', build: BUILD });
   });
 });

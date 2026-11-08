@@ -184,7 +184,7 @@ function showMenu() { state = null; active = null; queue = []; hidden.home.clear
 function connect() {
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/whaleship/ws`);
   socket.onopen = () => { connected = true; retries = 0; render(); setTimeout(pollGames, 600); setTimeout(registerPush, 1200); };
-  socket.onclose = () => { connected = false; pending = false; render(); setTimeout(connect, Math.min(15000, 750 * 2 ** retries++)); };
+  socket.onclose = () => { connected = false; pending = false; if (demo.on) stopDemo(false); render(); setTimeout(connect, Math.min(15000, 750 * 2 ** retries++)); };
   socket.onerror = () => {};
   socket.onmessage = e => {
     let msg; try { msg = JSON.parse(e.data); } catch { return; }
@@ -198,6 +198,7 @@ function connect() {
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
+    if (msg.type === 'DEMO_STATE') { if (demo.on) onState(msg); return; }
     if (msg.type === 'LOCAL_SEAT' && msg.state?.id) { (deviceSeats[msg.state.id] ||= {})[msg.seat] = msg.credential; saveDeviceSeats(); toast(`🛋️ Captain ${msg.seat + 1} plays on this device: pass it over when it's their volley.`); }
     if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game removed.'); return; }
     pending = false;
@@ -232,6 +233,7 @@ function setAim(seat, quiet = false) {
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
 function onState(msg) {
   const incoming = adaptTrio(msg.state);
+  if (incoming.demo) incoming.turn = -1;
   if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
   if (state?.id === incoming.id && incoming.revision < state.revision) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
@@ -247,7 +249,7 @@ function onState(msg) {
   seen = incoming.attacks.length;
   const evs = incoming.events || [];
   if (restoring) seenEvents = evs.length; const fresh = evs.slice(Math.min(seenEvents, evs.length)); seenEvents = evs.length;
-  state = incoming; active = state.id;
+  state = incoming; if (!state.demo) active = state.id;
   if (fresh.length) setTimeout(() => fresh.forEach(showEvent), queue.length ? 900 : 0);
   if (msg.credential) { seatKeys[active] = msg.credential; saveSession(); if (trioOn()) { (deviceSeats[active] ||= {})[state.seat] = msg.credential; saveDeviceSeats(); } }
   if (trioOn() && pendingLocal && state.seat === 0 && msg.type === 'MATCH_CREATED') { pendingLocal = false; setTimeout(addLocalCaptain, 200); }
@@ -292,7 +294,7 @@ function onState(msg) {
 /* ---------------- ongoing games ---------------- */
 function matches() { try { return JSON.parse(localStorage.getItem('whaleship:matches') || '{}'); } catch { return {}; } }
 function rememberMatch() {
-  if (deletedGames.has(state.id)) return;
+  if (deletedGames.has(state.id) || state.demo) return;
   const m = matches();
   m[state.id] = {mode: state.mode, size: state.size, opp: state.opponent?.name || '', mine: myTurn(), phase: state.phase, t: Date.now()};
   try { localStorage.setItem('whaleship:matches', JSON.stringify(Object.fromEntries(Object.entries(m).sort((a, b) => b[1].t - a[1].t).slice(0, 20)))); } catch {}
@@ -1141,11 +1143,15 @@ function critterTick() {
 
 /* ---------------- banner, HUD, title ---------------- */
 let bannerOverride = null;
-function setTurnBanner(text, kind) { bannerOverride = {text, kind}; paintBanner(); }
+function setTurnBanner(text, kind) {
+  if (state?.demo) { text = text.replace(/^🚨 INCOMING/, `📡 ${oppName()}`).replace(/^📡 PING/, `📡 ${myAi()}`); kind = kind === 'alarm' ? 'theirs' : kind; }   // attract mode: name the CPU firing
+  bannerOverride = {text, kind}; paintBanner();
+}
 function paintBanner() {
   let text, kind;
   if (animating && bannerOverride) ({text, kind} = bannerOverride);
   else if (!state) { text = connected ? '🐳 Tap the ocean to play' : '📡 Contacting harbor…'; kind = 'idle'; }
+  else if (state.demo) { text = state.phase === 'finished' ? `🏁 ${state.winner == null ? 'Truce' : (state.winner === state.seat ? myAi() : oppName()) + ' wins'} · tap to play` : '🎬 CPU vs CPU · tap anywhere to play'; kind = 'idle'; }
   else if (deploying()) {
     if (!state.me.ready) { text = settings.manual ? '⚓ Arrange your stack' : '⚓ Deploying your stack…'; kind = 'deploy'; }
     else if (state.mode === 'multiplayer' && !state.opponent) { text = '📨 Waiting for a friend to open your link'; kind = 'wait'; }
@@ -1158,11 +1164,12 @@ function paintBanner() {
 }
 function showCtas(ids, pulse) { for (const id of CTAS) { const e = $('#' + id); if (!e) continue; e.hidden = !ids.includes(id); e.classList.toggle('cta', id === pulse); } }
 function renderHud() {
-  $('#views').hidden = !state;
+  $('#views').hidden = !state || !!state.demo;
   for (const [id, v] of [['#view-target', 'target'], ['#view-home', 'home']]) { $(id).setAttribute('aria-selected', String(view === v)); $(id).disabled = animating; }
   const canNotify = 'Notification' in window && Notification.permission === 'default';
   let hint = '', ids = [], pulse = null;
-  if (!state) { hint = chosenSize === 9 ? `quick game · 9 sectors A–I · type E5 · ${RULE_INFO[chosenRules].label.toLowerCase()}` : `sink their infrastructure · 36 sectors · type Q5 or 35 · ${RULE_INFO[chosenRules].label.toLowerCase()}`; ids = ['sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend']; pulse = 'cta-solo'; paintSizes(); }
+  if (state?.demo) { hint = `attract mode · ${myAi()} vs ${oppName()} · tap anywhere to take the helm`; }
+  else if (!state) { hint = chosenSize === 9 ? `quick game · 9 sectors A–I · type E5 · ${RULE_INFO[chosenRules].label.toLowerCase()}` : `sink their infrastructure · 36 sectors · type Q5 or 35 · ${RULE_INFO[chosenRules].label.toLowerCase()}`; ids = ['sizes', 'rules', 'cta-solo', 'difficulty', 'cta-friend']; pulse = 'cta-solo'; paintSizes(); }
   else if (deploying()) {
     const waitingFriend = state.mode === 'multiplayer' && !state.opponent;
     if (!state.me.ready) { hint = held != null ? `tap water to move ${NICE(held)} · tap it again to rotate` : 'drag a creature to move it · tap one, then tap water'; ids = ['cta-shuffle', 'cta-ready', ...(waitingFriend ? ['cta-invite'] : [])]; pulse = state.me.ships.length === FLEET.length ? 'cta-ready' : null; }
@@ -1190,8 +1197,8 @@ function renderHud() {
   document.querySelectorAll('[data-rules]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rules === chosenRules)));
   $('#cta-ready').disabled = !state || state.me.ships.length !== FLEET.length || state.me.ready || !connected;
   $('#cta-shuffle').disabled = !state || state.me.ready || !connected;
-  document.body.dataset.phase = !state ? 'menu' : state.phase;
-  $('#end-btn').hidden = !state || state.phase === 'finished';
+  document.body.dataset.phase = !state ? 'menu' : state.demo ? 'demo' : state.phase;
+  $('#end-btn').hidden = !state || state.demo || state.phase === 'finished';
 }
 function specList() {
   if (!state) return [];
@@ -1354,7 +1361,7 @@ function renderWatch() {
 let resultShownFor = null;
 function renderResult() {
   const o = $('#result-overlay');
-  if (state?.phase !== 'finished' || animating || queue.length) { o.hidden = true; return; }
+  if (state?.phase !== 'finished' || state.demo || animating || queue.length) { o.hidden = true; return; }
   if (resultShownFor === state.id) return;
   resultShownFor = state.id;
   const won = state.winner === state.seat, mine = state.attacks.filter(a => a.seat === state.seat && !a.reveal), theirs = state.attacks.filter(a => a.seat !== state.seat && !a.reveal);
@@ -1455,6 +1462,45 @@ function paintSound() { const b = $('#sound-toggle'); b.setAttribute('aria-press
 async function setSound(on, persist) { soundOn = on; if (persist) { try { localStorage.setItem('whaleship:sound', on ? 'on' : 'off'); } catch {} } paintSound(); try { await audio.enable(on); } catch { if (on) toast('Audio unavailable — every cue is also visual.'); } }
 const unlock = e => { if (e.target.closest?.('#sound-toggle')) return; if (soundOn && !audio.isEnabled()) setSound(true); };
 addEventListener('pointerdown', unlock, {capture: true}); addEventListener('keydown', unlock, {capture: true});
+
+/* ---------------- attract mode: a CPU battle plays behind the home screen when nobody's touched it ----------------
+   After IDLE_MS on the home screen (no dialog open, tab visible, connected), the server plays a CPU-vs-CPU quick
+   battle for this tab only (never saved or scored). The first touch or key drops it and brings the menu back; it also
+   leaves by itself when the battle ends or after DEMO_MAX_MS. */
+const IDLE_MS = (Number(new URLSearchParams(location.search).get('idle')) || 60) * 1000, DEMO_MAX_MS = 4 * 60000;
+const demo = {on: false, since: 0, ended: 0, swallow: 0, stepAsked: 0};
+let lastInput = Date.now();
+const myAi = () => state?.names?.[state.seat] || 'CPU';
+function startDemo() { demo.on = true; demo.since = Date.now(); demo.ended = 0; audio.setHush(true); raw({type: 'DEMO'}); }
+function stopDemo(tell = true) {
+  if (!demo.on) return; demo.on = false; audio.setHush(false); if (tell) raw({type: 'DEMO_STOP'});
+  if (!state?.demo) return;
+  queue = []; document.body.classList.add('switching');
+  const done = () => { if (state?.demo) showMenu(); document.body.classList.remove('switching'); };
+  if (!animating) { done(); return; }
+  const t0 = Date.now(), wait = () => { if (!animating || Date.now() - t0 > 4000) { animating = false; done(); } else setTimeout(wait, 60); }; wait();
+}
+const touched = e => {
+  lastInput = Date.now();
+  if (!demo.on) return;
+  demo.swallow = Date.now() + 700; stopDemo();
+  e.preventDefault(); e.stopPropagation();
+};
+for (const t of ['pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(t, touched, {capture: true, passive: false});
+addEventListener('click', e => { if (Date.now() < demo.swallow) { e.preventDefault(); e.stopPropagation(); } }, {capture: true});
+addEventListener('pointermove', () => { if (!demo.on) lastInput = Date.now(); }, {passive: true});
+setInterval(() => {
+  const t = Date.now();
+  if (demo.on) {
+    if (!state?.demo) { if (t - demo.since > 8000) stopDemo(); return; }            // the server never answered
+    if (t - demo.since > DEMO_MAX_MS || document.hidden) { stopDemo(); lastInput = t; return; }
+    if (animating || queue.length) return;
+    if (state.phase === 'finished') { demo.ended ||= t; if (t - demo.ended > 7000) { stopDemo(); lastInput = t; } return; }
+    if (t - demo.stepAsked > 900) { demo.stepAsked = t; raw({type: 'DEMO_STEP'}); }
+    return;
+  }
+  if (!state && connected && !pending && !document.hidden && !document.querySelector('dialog[open]') && $('#result-overlay').hidden && t - lastInput > IDLE_MS) startDemo();
+}, 500);
 
 /* ---------------- wiring ---------------- */
 async function copy(text, msg = 'Copied!') { try { await navigator.clipboard.writeText(text); toast(msg); audio.sound('copy'); } catch { toast('Copy this: ' + text); } }

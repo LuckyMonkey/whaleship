@@ -95,8 +95,10 @@ export function setLevels(next) {
   levels = {...levels, ...next};
   if (ctx) { master.gain.value = levels.master; effects.gain.value = levels.effects; music.gain.value = levels.music; ambient.gain.value = levels.ambient; }
 }
+let hush = false;
+export const setHush = v => { hush = !!v; };   // attract mode plays silently (the surf bed keeps going)
 export function sound(kind, incoming = false) {
-  if (!enabled || !ctx) return;
+  if (!enabled || !ctx || hush) return;
   const pan = incoming ? .45 : -.45;
   switch (kind) {
     case 'launch':   // whoosh of a packet leaving
