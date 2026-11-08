@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.21.2 — 2026-11-08
+
+**Showdown actually happens now, and fixes.** Pinned per match (`pace` 4): games already running keep their rules.
+
+- **Showdown starts when either captain is down to their last vessel** (it used to wait for both, and in practice games
+  ended with the winner still on 3–5 vessels, so it never came up). The captain with more vessels left only has to find
+  one; the other has to find them all, live.
+- **Fix: no grid on your own map** in 2-player games since 0.21.1 (your board was never repainted).
+- **Fix: flames in open water.** Fires from a board of an earlier layout (2 ↔ 3 captains) were drawn at the ocean's centre.
+- **More icebergs** on every map size (quick: 4, was 2), for new games.
+- **New-game menu: 2 PLAYERS / 3 PLAYERS tabs.** The quick/full map choice and the rules are under 2 players (the full
+  map is 2-player only); 3 players is the quick map.
+- **3 captains, map slider:** 🎯 one rival · 🎯 the other · 🎯🎯 both · ⚓ mine. Typing a rival's letters moves a
+  single-map view to that rival.
+- **3 captains, two scenes a round:** a round now plays everything that lands on the rivals first (your volley as one
+  launch to both maps, then rival on rival), then everything that lands on you, so the camera moves twice, not once per
+  volley.
+
 ## 0.21.1 — 2026-11-08
 
 **3 captains: see both rivals at once.** Client-only; saved games and their rules are unchanged.

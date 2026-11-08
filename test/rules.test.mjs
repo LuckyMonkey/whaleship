@@ -29,6 +29,20 @@ function client(cookie) {
 }
 async function solo(opts = {}) { const c = client(); await c.open; const created = await c.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'warfare', name: 't', ...opts }); await c.act('RANDOMIZE_FLEET'); await c.act('READY'); return Object.assign(c, { created }); }
 const openCells = st => st.opponent.shots.map((v, i) => v === 0 ? i : -1).filter(i => i >= 0);   // avoids the random firewall icebergs
+// play a solo game to its end: volleys, then (pace 4) live taps once the showdown starts. onTurn(st) sees each volley's state.
+async function playOut(c, onTurn = () => {}) {
+  let st = c.st;
+  for (let turns = 0; st.phase === 'playing' && !st.showdown && turns < 60; turns++) {
+    onTurn(st); const res = await c.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!res.error, res.error);
+    st = res.state; if (st.phase === 'playing' && !st.showdown && st.turn !== st.seat) st = (await new Promise(r => setTimeout(r, 900)), c.st);
+  }
+  for (const cell of st.showdown ? openCells(st) : []) {           // misses leave no mark, so just sweep the map
+    if (c.st.phase !== 'playing') break;
+    await new Promise(r => setTimeout(r, 170)); c.send({ type: 'SNAP', session: st.id, cell });
+  }
+  for (let i = 0; i < 40 && c.st.phase === 'playing'; i++) await new Promise(r => setTimeout(r, 250));
+  return c.st;
+}
 const rot = ([x, y], r) => { for (let i = 0; i < r; i++) [x, y] = [-y, x]; return [x, y]; };
 const TEE = [[-1, -2], [0, -2], [1, -2], [0, -1], [0, 0]];
 
@@ -37,7 +51,7 @@ test('the 6×6 sector map is the default: 18×18, 36 sectors, kubernetes carrier
   const m = await c.send({ type: 'CREATE_MATCH', mode: 'easy', name: 't' });
   assert.equal(m.state.size, 36); assert.equal(m.state.w, 18); assert.equal(m.state.h, 18); assert.equal(m.state.sectors, true);
   assert.ok(m.state.fleet.some(f => f.kind === 1 && f.name.startsWith('k8s-')));
-  assert.equal(m.state.firewalls.length, 5); for (const fw of m.state.firewalls) assert.equal(m.state.me.shots[fw], 5);
+  assert.equal(m.state.firewalls.length, 7); for (const fw of m.state.firewalls) assert.equal(m.state.me.shots[fw], 5);
   const f = await c.act('RANDOMIZE_FLEET');
   for (const sh of f.state.me.ships) for (const cell of sh.cells) assert.ok(!f.state.firewalls.includes(cell), 'ship on a firewall');
   c.close();
@@ -180,24 +194,20 @@ test('deleted games stay deleted: END_MATCH hides the game from that player for 
   a.close(); b.close(); c.close();
 });
 
-test('QUICK: 9×9, sectors A–I, one vessel of every role, salvo 3 (+1 carrier), two firewalls', async () => {
+test('QUICK: 9×9, sectors A–I, one vessel of every role, salvo 3 (+1 carrier), four firewalls', async () => {
   const c = await solo({ size: 9 });
   const st = c.st;
   assert.equal(st.size, 9); assert.equal(st.w, 9); assert.equal(st.h, 9); assert.equal(st.sectors, true);
   assert.deepEqual(st.fleet.map(f => f.len), [5, 4, 3, 3, 2]); assert.deepEqual(st.fleet.map(f => f.kind), [0, 1, 2, 3, 4]);
-  assert.equal(st.firewalls.length, 2); assert.equal(st.salvo, 4, 'salvo 3 + 1 for the living kubernetes carrier');
+  assert.equal(st.firewalls.length, 4); assert.equal(st.salvo, 4, 'salvo 3 + 1 for the living kubernetes carrier');
   assert.ok(st.me.specials.every(sp => sp.ok || sp.why.startsWith('cooldown') || sp.free), 'every role is afloat, so no special starts offline');
   const res = await c.act('FIRE', { cells: openCells(st).slice(0, 3) }); assert.ok(!res.error, res.error);
   c.close();
 });
 
 test('endgame pace: salvo never drops more than one below the board max, and a quick game always finishes', async () => {
-  const c = await solo({ size: 9, rules: 'classic' }); let low = 9, turns = 0, st = c.st;
-  while (st.phase === 'playing' && turns++ < 60) {
-    low = Math.min(low, st.salvo);
-    const res = await c.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!res.error, res.error);
-    st = res.state; if (st.phase === 'playing' && st.turn !== st.seat) st = (await new Promise(r => setTimeout(r, 900)), c.st);
-  }
+  const c = await solo({ size: 9, rules: 'classic' }); let low = 9, turns = 0;
+  const st = await playOut(c, s => { low = Math.min(low, s.salvo); turns++; });
   assert.equal(st.phase, 'finished'); assert.ok(low >= 2, `salvo fell to ${low}`); assert.ok(turns <= 30, `took ${turns} turns`);
   c.close();
 });
@@ -228,7 +238,7 @@ test('state transfer: a game in progress survives a server update + schema migra
   await stop(srvA);                                                    // SIGTERM flushes pending saves
   // rewrite the save as the previous release would have written it (schema v3, no pace field)
   const f = path.join(dir, 'matches', created.state.id + '.json'), saved = JSON.parse(readFileSync(f, 'utf8'));
-  assert.equal(saved.v, 4); assert.equal(saved.pace, 3); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
+  assert.equal(saved.v, 4); assert.equal(saved.pace, 4); delete saved.pace; saved.v = 3; writeFileSync(f, JSON.stringify(saved));
   // a file from a FUTURE schema (e.g. after a rollback) must be left alone, byte for byte
   const fut = path.join(dir, 'matches', 'f'.repeat(32) + '.json'), futBody = JSON.stringify({ ...saved, id: 'f'.repeat(32), v: 99 }); writeFileSync(fut, futBody);
   const check = JSON.parse(execFileSync(process.execPath, ['server.js', '--check-data', path.join(dir, 'matches')], { cwd: path.resolve(import.meta.dirname, '..'), env: { ...process.env, DATA_DIR: mkdtempSync(path.join(tmpdir(), 'ws-chk-')) } }).toString());
@@ -264,7 +274,7 @@ test('link previews: dynamic PNG cards per match for invites, battles and result
   assert.ok(!(await png(p.image)).equals(lobbyPng), 'the card changes when the match changes');
   // a finished solo game shared with ?r= gets a result card
   const solo = await (async () => { const c = client(); await c.open; await c.send({ type: 'CREATE_MATCH', mode: 'easy', size: 9, rules: 'classic', name: 'Ace' }); await c.act('RANDOMIZE_FLEET'); await c.act('READY');
-    for (let i = 0; i < 60 && c.st.phase === 'playing'; i++) { const r = await c.act('FIRE', { cells: openCells(c.st).slice(0, c.st.salvo) }); if (r.state?.phase === 'playing' && r.state.turn !== r.state.seat) await new Promise(res => setTimeout(res, 50)); } return c; })();
+    await playOut(c); return c; })();
   assert.equal(solo.st.phase, 'finished');
   const rr = await og(`?r=${Buffer.from(solo.st.id, 'hex').toString('base64url')}`); assert.match(rr.title, /won a WHALESHIP battle/); await png(rr.image);
   for (const q of ['', '?j=nope', `?j=${Buffer.from('0'.repeat(32), 'hex').toString('base64url')}`]) { const d = await og(q); assert.match(d.title, /Sink their stack/); assert.match(d.image, /\/og\/default\.jpg/); }
@@ -404,10 +414,7 @@ test('attract mode: a CPU-vs-CPU demo on one socket, paced by the client, never 
 test('replays: a finished battle comes back whole (both fleets, every move); a game still being played never does', async () => {
   const c = await solo({ size: 9, rules: 'classic' }); let st = c.st;
   const early = await c.send({ type: 'REPLAY', session: st.id }); assert.ok(early.error, 'no replay while playing');
-  for (let turns = 0; st.phase === 'playing' && turns < 60; turns++) {
-    const res = await c.act('FIRE', { cells: openCells(st).slice(0, st.salvo) }); assert.ok(!res.error, res.error);
-    st = res.state; if (st.phase === 'playing' && st.turn !== st.seat) st = (await new Promise(r => setTimeout(r, 900)), c.st);
-  }
+  st = await playOut(c);
   assert.equal(st.phase, 'finished');
   const viewer = client(); await viewer.open;
   const r = await viewer.send({ type: 'REPLAY', session: st.id }); assert.ok(!r.error, r.error);
@@ -416,7 +423,11 @@ test('replays: a finished battle comes back whole (both fleets, every move); a g
   // replaying the log onto empty boards gives the final boards
   for (const t of [0, 1]) {
     const b = new Array(81).fill(0); for (const c2 of r.state.firewalls) b[c2] = 5;
-    for (const a of r.state.attacks.filter(a => !a.reveal && 1 - a.seat === t)) { b[a.cell] = a.hit ? 2 : 1; if (a.sunk) r.state.fleets[t].find(x => x.id === a.sunk.id).cells.forEach(x => b[x] = 3); }
+    for (const a of r.state.attacks) {
+      if (a.showdown) { b.forEach((v, i) => { if (v === 1 || v === 2 || v === 4) b[i] = 0; }); continue; }   // the showdown wiped the map here
+      if (a.reveal || 1 - a.seat !== t) continue;
+      b[a.cell] = a.hit ? 2 : 1; if (a.sunk) r.state.fleets[t].find(x => x.id === a.sunk.id).cells.forEach(x => b[x] = 3);
+    }
     assert.deepEqual(b, t === r.state.seat ? r.state.me.shots : r.state.opponent.shots);
   }
   const mine = await c.send({ type: 'REPLAY', session: st.id, credential: c.created.credential }); assert.equal(mine.state.seat, 0);
@@ -430,7 +441,7 @@ test('showdown (pace 3): last vessel each - the map is wiped, turns end, taps re
     const created = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'classic', size: 9, name: 't' });
     await a.act('RANDOMIZE_FLEET'); await a.act('READY'); await new Promise(r => setTimeout(r, 400)); a.close(); await stop(srv);
     const f = path.join(dir, 'matches', created.state.id + '.json'), m = JSON.parse(readFileSync(f, 'utf8'));
-    assert.equal(m.pace, 3);
+    assert.equal(m.pace, 4);
     for (const x of m.seats) x.ships.slice(1).forEach(sh => sh.cells.forEach(c => x.board[c] = 3));   // everything but the first vessel is a wreck
     const ai = m.seats[1], last = ai.ships[0].cells, wreck = new Set(ai.ships.slice(1).flatMap(sh => sh.cells));
     const water = [...Array(81).keys()].filter(c => ai.board[c] === 0 && !last.includes(c));
@@ -449,5 +460,27 @@ test('showdown (pace 3): last vessel each - the map is wiped, turns end, taps re
     assert.equal(r.state.opponent.shots[water[2]], 0, 'a showdown miss leaves no mark');
     assert.ok(r.state.attacks.filter(x => x.snap).length === last.length);
     a.close(); await new Promise(res => setTimeout(res, 300));
+  } finally { await stop(srv); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('showdown (pace 4): starts when either fleet is down to its last vessel; pace-3 games still wait for both', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'ws-sd4-')), port = PORT + 5; let srv = await bootServer(dir, port);
+  try {
+    let a = clientAt(port); await a.open;
+    const one = await a.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'classic', size: 9, name: 't' }); await a.act('RANDOMIZE_FLEET'); await a.act('READY');
+    let b = clientAt(port); await b.open;
+    const two = await b.send({ type: 'CREATE_MATCH', mode: 'easy', rules: 'classic', size: 9, name: 't' }); await b.act('RANDOMIZE_FLEET'); await b.act('READY');
+    await new Promise(r => setTimeout(r, 400)); a.close(); b.close(); await stop(srv);
+    const stage = (id, pace) => { const f = path.join(dir, 'matches', id + '.json'), m = JSON.parse(readFileSync(f, 'utf8')); m.pace = pace; m.turn = 0;
+      m.seats[1].ships.slice(1).forEach(sh => sh.cells.forEach(c => m.seats[1].board[c] = 3)); writeFileSync(f, JSON.stringify(m)); return m; };   // only the AI is down to one vessel
+    const m4 = stage(one.state.id, 4), m3 = stage(two.state.id, 3);
+    srv = await bootServer(dir, port);
+    const water = m => [...Array(81).keys()].find(c => m.seats[1].board[c] === 0 && !m.seats[1].ships[0].cells.includes(c));
+    for (const [m, cred, want] of [[m4, one.credential, true], [m3, two.credential, false]]) {
+      const c = clientAt(port); await c.open; await c.send({ type: 'RESUME_MATCH', session: m.id, credential: cred }); await new Promise(r => setTimeout(r, 300));
+      const r = await c.act('FIRE', { cells: [water(m)] }); assert.ok(!r.error, r.error);
+      assert.equal(!!r.state.showdown, want, `pace ${m.pace}`); c.close();
+    }
+    await new Promise(r => setTimeout(r, 300));
   } finally { await stop(srv); rmSync(dir, { recursive: true, force: true }); }
 });

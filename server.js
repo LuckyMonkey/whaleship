@@ -84,7 +84,7 @@ const SPECIALS = {
   restore: { needs: 'walrus', effect: 'repair',  pattern: 'one',     cd: 0, charges: C1 },   // pace 2: relocate() - restored whole, elsewhere
 };
 const FREE = new Set(['dns', 'restore']);
-const FIREWALLS = { 9: 2, 10: 0, 15: 3, 18: 3, 20: 4, 30: 6, 36: 5 };                                   // iceberg cells: no ships, can't be targeted
+const FIREWALLS = { 9: 4, 10: 0, 15: 4, 18: 4, 20: 5, 30: 8, 36: 7 };   // v0.21.2: a few more per map (new matches only; a match keeps the icebergs it was created with)                                   // iceberg cells: no ships, can't be targeted
 const drainedRoles = seat => [...(seat.drains || []), ...(seat.drained ? [seat.drained] : [])].filter(d => d.turns > 0).map(d => d.role);
 const roleUp = (m, seat, role) => !drainedRoles(seat).includes(role) && seat.ships.some(sh => m.fleet[sh.id].kind === ROLE[role] && !isSunk(seat, sh));
 const rolesOf = (m, seat) => Object.fromEntries(Object.keys(ROLE).map(r => [r, roleUp(m, seat, r)]));
@@ -167,8 +167,9 @@ function persist(m) {
    Each schema bump adds one step to MIGRATIONS; load() upgrades old files in memory (written back on next save).
    Files from a NEWER schema (after a rollback) are left untouched on disk and not served, so they can't be damaged.
    `node server.js --check-data DIR` runs the same load against a copy of the data without writing anything. */
-const SCHEMA = 4, PACE = 3;   // pace 2 (v0.19): restore relocates the creature (relocate()); older matches keep the one-segment repair
+const SCHEMA = 4, PACE = 4;   // pace 2 (v0.19): restore relocates the creature (relocate()); older matches keep the one-segment repair
                               // pace 3 (v0.21): showdown when both captains are down to one vessel (see SHOWDOWN below)
+                              // pace 4 (v0.21.2): showdown as soon as EITHER captain is down to its last vessel
 const MIGRATIONS = {
   // v1–v2 (no m.v) and v3 → v4: record that the match started under the original salvo rule (pace 0).
   3: m => { m.pace ??= 0; },
@@ -580,7 +581,8 @@ function fire(m, s, msg) {
 const SNAP_GAP = 160, SD_AI_MS = { easy: 2400, normal: 1700, hard: 1150 };   // a person can tap 3-5 times a second; the CPU is slower but never forgets
 const lastVessel = seat => seat.ships.filter(sh => !isSunk(seat, sh)).length === 1;
 function maybeShowdown(m) {
-  if (m.pace < 3 || trio(m) || m.showdown || m.phase !== 'playing' || !m.seats.every(x => x && lastVessel(x))) return;
+  if (m.pace < 3 || trio(m) || m.showdown || m.phase !== 'playing' || !m.seats.every(Boolean)) return;
+  if (m.pace >= 4 ? !m.seats.some(lastVessel) : !m.seats.every(lastVessel)) return;   // pace 4: either fleet at its last vessel · pace 3: both
   for (const x of m.seats) { x.board = x.board.map(v => v === 3 || v === 5 ? v : 0); x.sonar = []; if (x.decoys) x.decoys = []; x.frozen = 0; }
   m.showdown = { started: Math.floor(now() / 1000), tried: [[], []] };
   m.attacks.push({ seat: -1, cell: -1, hit: false, sunk: null, turn: m.turn_number, reveal: true, showdown: true });   // replays wipe the map here too

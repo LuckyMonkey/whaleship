@@ -97,6 +97,7 @@ const letters = (s = mapSeat()) => s == null || !state?.labels ? LETTERS : state
 const coord = (c, s) => SECT() ? letters(s)[secOf(c)] + subOf(c) : colLabel(c % N) + (Math.floor(c / N) + 1);
 let parsedSeat = null;
 const lc = c => coord(c).toLowerCase();
+const lcx = x => trioOn() && x.target != null ? coord(x.cell, x.target).toLowerCase() : lc(x.cell);   // a shot's address on the map it hit
 const ip = (c, enemy) => SECT() ? `${enemy ? '172.20' : '10.0'}.${secOf(c) + 1}.${subOf(c)}` : `${enemy ? '172.20' : '10.0'}.${Math.floor(c / N) + 1}.${c % N + 1}`;
 function parseCoord(v) {
   if (SECT() && trioOn()) { const m = /^([a-z0-9])([1-9])$/i.exec((v || '').trim()); if (!m) return -1; const seat = state.labels.findIndex(L => L.includes(m[1].toLowerCase())); if (seat < 0) return -1; parsedSeat = seat; return cellOf(state.labels[seat].indexOf(m[1].toLowerCase()), Number(m[2])); }
@@ -240,27 +241,31 @@ function setAim(seat, quiet = false) {
   if (!trioOn() || seat === state.seat || !state.captains[seat] || state.captains[seat].empty) return;
   if (targets.size || volley.has(aimSeat)) volley.set(aimSeat, new Set(targets));
   aimSeat = seat; adaptTrio(state); targets.clear(); for (const c of volley.get(seat) || []) targets.add(c); sel = -1; R3?.setActive(actKey());
-  if (!quiet) { audio.sound('select'); render(); }
+  if (!quiet) { if (trioFocus !== 'both' && trioFocus !== seat) { trioFocus = seat; if (R3 && view === 'target') R3.focus(camKey(), settings.fast ? 320 : 560, actKey()); } audio.sound('select'); render(); }
 }
 const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
 function onState(msg) {
-  const incoming = adaptTrio(msg.state), snaps = [];
+  const incoming = adaptTrio(msg.state), snaps = [], round = [];
   if (incoming.demo || incoming.replay) incoming.turn = -1;
   if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
   if (rp.on && state?.replay && !incoming.replay) return;                  // a live update for the battle being replayed waits
   if (state?.id === incoming.id && incoming.revision < state.revision && !incoming.replay) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
-  if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10, incoming.players === 3 ? 3 : 2); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
+  if (restoring) { trioFocus = 'both'; FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10, incoming.players === 3 ? 3 : 2); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
   else for (const a of incoming.attacks.slice(seen)) {
     const mine = a.seat === incoming.seat;
     if (a.showdown) continue;
     if (a.snap) { snaps.push(a); continue; }
-    if (incoming.players === 3) { (a.target === incoming.seat ? hidden.home : hk('t' + a.target)).add(a.cell); queue.push(a); continue; }
+    if (incoming.players === 3) { (a.target === incoming.seat ? hidden.home : hk('t' + a.target)).add(a.cell); round.push(a); continue; }
     if (!a.reveal) hidden[mine ? 'target' : 'home'].add(a.cell);
     if (a.sunk && mine) hiddenSunk.add(a.sunk.id);
     queue.push(a);
   }
+  // 3 captains: a round lands all at once (in shuffled order). Play it in two scenes: everything that lands on a rival
+  // (your volley first, as one launch to both maps; then rival on rival), then everything that lands on you.
+  if (round.length) { const me = incoming.seat, rank = a => (a.target === me ? 2 : 0) + (a.seat === me ? 0 : 1);
+    queue.push(...round.map((a, i) => [a, i]).sort(([x, i], [y, j]) => rank(x) - rank(y) || x.seat - y.seat || i - j).map(([a]) => a)); }
   seen = incoming.attacks.length;
   const evs = incoming.events || [];
   if (restoring) seenEvents = evs.length; const fresh = evs.slice(Math.min(seenEvents, evs.length)); seenEvents = evs.length;
@@ -431,7 +436,6 @@ function renderGameList() {
 }
 function paintSizes() {
   document.querySelectorAll('[data-size]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.size) === chosenSize)));
-  const quick = chosenSize === 9; document.querySelectorAll('.trio-grid').forEach(e => e.hidden = !quick); const n = $('#trio-full'); if (n) n.hidden = quick;   // 3 captains is a quick game only
 }
 function openNewGame() { renderGameList(); paintSizes(); $('#new-dialog').showModal(); pollGames(); }
 let qrLoaded = null;
@@ -516,7 +520,13 @@ const rivals = () => [0, 1, 2].filter(i => i !== state?.seat);
 const rk = seat => seat === state?.seat ? 'home' : layout === 3 ? (seat === rivals()[0] ? 'ra' : 'rb') : 'target';
 const seatOfKey = k => k === 'ra' ? rivals()[0] : k === 'rb' ? rivals()[1] : null;
 const actKey = () => view === 'home' ? 'home' : layout === 3 ? rk(aimSeat) : 'target';   // the board taps and effects land on
-const camKey = () => view === 'home' ? 'home' : layout === 3 ? 'rivals' : 'target';       // what the camera frames
+let trioFocus = 'both';   // 3 captains, aiming: 'both' rivals' maps, or one rival's seat
+const camKey = () => view === 'home' ? 'home' : layout === 3 ? (trioFocus === 'both' || trioFocus === state?.seat || state?.captains?.[trioFocus]?.out != null || !state?.captains ? 'rivals' : rk(trioFocus)) : 'target';   // what the camera frames
+function setTrioFocus(f) {
+  trioFocus = f; if (f !== 'both') setAim(f, true);
+  if (view !== 'target') slideTo('target'); else if (R3) R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
+  audio.sound('select'); render();
+}
 let layout = 2;   // boards on the 3D ocean: 2 (home + target) or 3 (home + both rivals)
 function setSize(n, players = 2) {
   if (n === SIZE && planeLife && players === layout) return;
@@ -554,7 +564,7 @@ function drawPlane() {
   const act = actKey(), hs = k => k === 'home' ? hidden.home.size : layout === 3 ? hk('t' + seatOfKey(k)).size : hidden.target.size;
   const base = [state?.id, state?.seat, state?.revision, hiddenSunk.size, shownSonar, N, myTurn()];
   for (const k of Object.keys(planes)) {
-    if (!planes[k].ctx || (layout === 3) !== (k === 'ra' || k === 'rb' || k === 'home')) continue;
+    if (!planes[k].ctx || !(layout === 3 ? ['home', 'ra', 'rb'] : ['home', 'target']).includes(k)) continue;   // only this layout's boards (0.21.1 skipped 'home' in 2-player games: no grid on your side)
     const queued = layout === 3 && k !== act && k !== 'home' ? [...(volley.get(seatOfKey(k)) || [])] : [];
     const sig = k === act ? [k, ...base, hs(k), aimSeat, sel, kb, armed, rotN, [...targets], [...locked], area, previewCells?.cells, previewCells?.ok, SECT() ? '' : hover].join('|') : [k, ...base, hs(k), queued].join('|');
     if (sig === planes[k].sig) continue; planes[k].sig = sig;
@@ -1041,8 +1051,9 @@ function bump(sel) { const e = sel === '#board-wrap' && R3 ? R3.canvas : $(sel);
 
 /* ---------------- resolving strikes ---------------- */
 async function resolveStrike(a, incoming, small) {
+  if (trioOn() && a.target != null) { if (R3) R3.setActive(rk(a.target)); (a.target === state.seat ? hidden.home : hk('t' + a.target)).delete(a.cell); }
   const p = cellPoint(a.cell);
-  hidden[incoming ? 'home' : 'target'].delete(a.cell);
+  if (!trioOn()) hidden[incoming ? 'home' : 'target'].delete(a.cell);
   const victim = incoming ? state.me.ships.find(s => s.cells.includes(a.cell)) : null;
   R3?.splash(a.cell, a.decoy ? 'decoy' : a.hit ? (a.sunk ? 'sunk' : 'hit') : 'miss');
   if (a.decoy) {
@@ -1086,7 +1097,9 @@ async function resolveStrike(a, incoming, small) {
     await sleep(settings.fast ? 450 : 1000);
   }
 }
-function takeGroup() { const a = queue.shift(), g = [a]; while (!a.reveal && queue.length && queue[0].seat === a.seat && queue[0].target === a.target && queue[0].turn === a.turn && queue[0].power === a.power && !queue[0].reveal) g.push(queue.shift()); return g; }
+function takeGroup() { const a = queue.shift(), g = [a];
+  if (trioOn()) { const mine = x => x.target === state.seat; while (queue.length && queue[0].seat === a.seat && queue[0].turn === a.turn && mine(queue[0]) === mine(a)) g.push(queue.shift()); return g; }   // one volley = one launch, even split across both rivals
+  while (!a.reveal && queue.length && queue[0].seat === a.seat && queue[0].target === a.target && queue[0].turn === a.turn && queue[0].power === a.power && !queue[0].reveal) g.push(queue.shift()); return g; }
 async function playNext() {
   if (animating || !queue.length || !state) return;
   animating = true;
@@ -1097,10 +1110,10 @@ async function playNext() {
   const enemyUser = {user: slug(trioOn() ? state.captains[a.seat]?.name || 'captain' : oppName()), host: multi() ? 'enemy' : 'ai-captain', enemy: true};
   if (power === 'chaos') log(`[ KUBERNETES EVENT ] OOMKilled: container at ${coord(a.cell)} exceeded its memory limit`, incoming ? 'error' : 'hit');
   else if (incoming) prompt(power ? `${PI(power).cmd} ${ip(a.cell, power === 'restore')}  # ${coord(a.cell)}` : `ping -c1 ${g.map(x => lc(x.cell)).join(' ')}`, enemyUser);
-  else if (!trioOn() || a.seat === state.seat) { stats.sent += g.length; if (!power) log(`PING 172.20.0.0/16: ${g.length} packet${g.length > 1 ? 's' : ''} → ${g.map(x => `${lc(x.cell)}(${ip(x.cell, true)})`).join(' ')}`); }
+  else if (!trioOn() || a.seat === state.seat) { stats.sent += g.length; if (!power) log(`PING 172.20.0.0/16: ${g.length} packet${g.length > 1 ? 's' : ''} → ${g.map(x => `${lcx(x)}(${ip(x.cell, true)})`).join(' ')}`); }
   setTurnBanner(power === 'restore' ? `💾 ${incoming ? 'ENEMY ' : ''}RESTORE` : power === 'chaos' ? '☸ OOMKilled' : incoming ? `🚨 INCOMING ${power ? PI(power).label : '×' + g.length}` : power ? `${PI(power).emoji} ${PI(power).label}!` : `📡 PING ×${g.length}`, incoming ? 'alarm' : 'mine');
   if (settings.reduced || document.hidden) {
-    view = to; g.forEach(x => { hidden[to].delete(x.cell); if (x.sunk) hiddenSunk.delete(x.sunk.id); }); if (a.reveal) shownSonar = state.opponent?.sonar?.length || 0; render();
+    view = to; g.forEach(x => { (trioOn() && x.target != null ? (x.target === state.seat ? hidden.home : hk('t' + x.target)) : hidden[to]).delete(x.cell); if (x.sunk) hiddenSunk.delete(x.sunk.id); }); if (a.reveal) shownSonar = state.opponent?.sonar?.length || 0; render();
     if (!document.hidden) { const hits = g.filter(x => x.hit).length; fxText(cellPoint(a.cell), a.reveal ? `SCAN: ${a.found} up` : hits ? `${hits} HIT${hits > 1 ? 'S' : ''}` : 'MISS', hits ? '#ffd34d' : '#dff6ff'); audio.sound(hits ? 'hit' : 'miss', incoming); await sleep(500); }
     if (!a.reveal) g.forEach(x => log(incoming ? `${ts()} ${x.hit ? 'container die' : 'missed'} ${lc(x.cell)}` : `${lc(x.cell)} (${ip(x.cell, true)}): ${x.hit ? 'HIT' : 'MISS'}`, x.hit ? (incoming ? 'error' : 'hit') : 'miss'));
   } else if (a.restored) {
@@ -1170,7 +1183,8 @@ async function playNext() {
     // one ocean: the camera starts on the fleet that fires and swings across the channel with its packets
     const cross = !!R3, T = fast ? 650 : 1000, fromView = trioOn() ? (a.seat === state.seat ? 'home' : 'target') : from;
     const fromKey = layout === 3 ? rk(a.seat) : from, toKey = layout === 3 ? rk(a.target) : to;   // which boards the packets fly between
-    if (cross) { if (view !== fromView) await slideTo(fromView, null, fast ? 240 : 380); }
+    if (cross && !trioOn()) { if (view !== fromView) await slideTo(fromView, null, fast ? 240 : 380); }   // 3 captains: packets fly in from off-screen; the camera only moves to where they land
+    if (cross && trioOn() && view === 'target' && R3.focusKey !== 'rivals') await R3.focus('rivals', fast ? 300 : 480, actKey());
     else if (view !== to) { audio.sound('launch', incoming); await slideTo(to, incoming ? 'right' : 'left'); }
     if (!cross) await ensureVisible(g.map(x => x.cell));
     let swing = null;
@@ -1183,7 +1197,7 @@ async function playNext() {
       audio.sound(i === 0 ? (power === 'depth' ? 'depth' : 'launch') : 'packet', incoming);
       const e = cellPoint(x.cell, geom), s = {x: e.x + (i - (shots.length - 1) / 2) * 24, y: incoming ? -30 : FX.h + 30};
       if (power === 'depth' || power === 'flood') return fxFlood(s, e, T);
-      if (R3 && cross) { const flight = R3.launch(x.cell, x.cell, {color, dur: (T + 500) / 1000, from: fromKey, to: toKey}); if (i === 0 && view !== to) swing = slideTo(to, null, T + 350); return flight; }   // across the channel
+      if (R3 && cross) { const flight = R3.launch(x.cell, x.cell, {color, dur: (T + 500) / 1000, from: fromKey, to: layout === 3 ? rk(x.target) : toKey}); if (i === 0 && view !== to) swing = slideTo(to, null, T + 350); return flight; }   // across the channel
       if (R3) return R3.launch(edgeCell(x.cell), x.cell, {color, dur: T / 1000});   // a glowing 3D packet with a light trail
       return fly(s, e, T, {color, glyph: power === 'tail' || power === 'trace' ? '🛰️' : power === 'oom' ? '💀' : power === 'chaos' ? '☸️' : incoming ? '🚀' : '📨', hops: power === 'tail' || power === 'trace', to: `${coord(x.cell)} ${ip(x.cell, !incoming)}`});
     }));
@@ -1205,6 +1219,7 @@ async function playNext() {
   if (!queue.length && state?.phase === 'playing') {
     await sleep(fast ? 200 : 400);
     const want = myTurn() || sdOn() ? 'target' : 'home'; if (view !== want) await slideTo(want);
+    else if (trioOn() && R3 && view === 'target' && R3.focusKey !== camKey()) await R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
     if (myTurn()) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); log(`${ts()} ⏎ your turn · ${salvo()} ping${salvo() > 1 ? 's' : ''} · ${specList().filter(x => x.ok).map(x => PI(x.id).short.toLowerCase()).join(' ') || 'no specials ready'}`, 'event'); }
   }
   render(); if (sdIntro && !queue.length) showdownIntro(); playNext();
@@ -1248,7 +1263,12 @@ function showCtas(ids, pulse) { for (const id of CTAS) { const e = $('#' + id); 
 function renderHud() {
   $('#views').hidden = !state || !!state.demo;
   paintReplay();
-  for (const [id, v] of [['#view-target', 'target'], ['#view-home', 'home']]) { $(id).setAttribute('aria-selected', String(view === v)); $(id).disabled = animating; }
+  const four = trioOn(), riv = four ? rivals() : [], short = n => (n || '').replace(/^\S+\s/, '');
+  $('#views').classList.toggle('four', four);
+  ['#view-ra', '#view-rb'].forEach((id, i) => { const b = $(id); b.hidden = !four; if (!four) return; const c = state.captains[riv[i]] || {};
+    b.textContent = `🎯 ${short(c.name) || 'rival'}`; b.title = c.name || ''; b.disabled = animating || c.empty || c.out != null; b.setAttribute('aria-selected', String(view === 'target' && trioFocus === riv[i])); });
+  $('#view-target').textContent = four ? '🎯🎯 both' : '🎯 enemy'; $('#view-target').setAttribute('aria-selected', String(view === 'target' && (!four || trioFocus === 'both'))); $('#view-target').disabled = animating;
+  $('#view-home').setAttribute('aria-selected', String(view === 'home')); $('#view-home').disabled = animating;
   const canNotify = 'Notification' in window && Notification.permission === 'default';
   let hint = '', ids = [], pulse = null;
   if (state?.replay) { hint = `replay · ${replayPos()} · space pause · ← → turn · esc leave`; }
@@ -1727,7 +1747,12 @@ $('#cta-forfeit').onclick = () => act('CLAIM_FORFEIT');
 $('#cta-again').onclick = () => { $('#result-overlay').hidden = true; newGame(state?.mode || 'multiplayer', state?.size || chosenSize); };
 $('#cta-share').onclick = () => { const won = state?.winner === state?.seat, mine = state?.attacks.filter(a => a.seat === state.seat && !a.reveal) || []; share(state ? `${gameUrl()}?r=${toShort(state.id)}` : gameUrl(), `WHALESHIP ${SIZE === 9 ? 'quick game' : SECT() ? 'sector map' : N + '×' + HT} incident report: ${won ? 'enemy cluster CATASTROPHIC FAILURE 🏆' : 'it works on my machine 💀'} · ${state?.turn_number} turns · ${mine.length} packets · ${mine.filter(a => a.hit).length} hits.`); };
 $('#cta-notify').onclick = async () => { try { const p = await Notification.requestPermission(); toast(p === 'granted' ? '🔔 We’ll ping you when it’s your move (keep this tab open in the background).' : 'Notifications are off — the tab title still shows 🟢 on your turn.'); } catch {} render(); };
-$('#view-target').onclick = () => slideTo('target'); $('#view-home').onclick = () => slideTo('home');
+$('#view-target').onclick = () => trioOn() ? setTrioFocus('both') : slideTo('target'); $('#view-home').onclick = () => slideTo('home');
+// new-game sheet: a tab for 2 players (quick or full map, rules, solo or a friend) and one for 3 players (quick map only)
+function playersTab(n) { document.querySelectorAll('[data-players]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.players === String(n)))); $('#tab-2p').hidden = n !== 2; $('#tab-3p').hidden = n !== 3; try { localStorage.setItem('whaleship:players-tab', String(n)); } catch {} }
+document.querySelectorAll('[data-players]').forEach(b => b.onclick = () => { playersTab(Number(b.dataset.players)); audio.sound('select'); });
+try { if (localStorage.getItem('whaleship:players-tab') === '3') playersTab(3); } catch {}
+$('#view-ra').onclick = () => setTrioFocus(rivals()[0]); $('#view-rb').onclick = () => setTrioFocus(rivals()[1]);
 $('#result-overlay').onclick = () => $('#result-overlay').hidden = true;
 $('#to-terminal').onclick = () => openTerminal(true); $('#to-game').onclick = () => openTerminal(false);
 $('#term-back').onclick = () => openTerminal(false);
@@ -1754,7 +1779,7 @@ document.addEventListener('keydown', e => {
   if (SECT() && (myTurn() || sdOn()) && !animating && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (trioOn() && (/^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)))) {           // 3 captains: the letter picks the map too
       const seat = state.labels.findIndex(L => L.includes(k));
-      if (seat >= 0 && seat !== state.seat && state.captains[seat]?.out == null) { e.preventDefault(); if (aimSeat !== seat) setAim(seat, true); if (view !== 'target') slideTo('target'); selectSector(state.labels[seat].indexOf(k)); return; }
+      if (seat >= 0 && seat !== state.seat && state.captains[seat]?.out == null) { e.preventDefault(); if (aimSeat !== seat) setAim(seat, true); if (trioFocus !== 'both' && trioFocus !== seat) setTrioFocus(seat); if (view !== 'target') slideTo('target'); selectSector(state.labels[seat].indexOf(k)); return; }
       if (seat === state.seat) { e.preventDefault(); toast('That’s your own map - aim at a rival’s letters.'); return; }
     }
     const li = /^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)) ? LETTERS.indexOf(k.toUpperCase()) : -1;

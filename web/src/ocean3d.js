@@ -476,6 +476,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     setBoard(n, ht, canvases, groupDefs = null) {
       N = n; HT = ht; lastSet = [canvases, groupDefs]; portrait = canvas.clientHeight > canvas.clientWidth; resize();
       for (const b of boards.values()) { scene.remove(b.mesh); b.mesh.geometry.dispose(); b.tex.dispose(); b.mat.dispose(); } boards.clear();
+      fireBy.clear(); fireSpots = []; fires.forEach(f => f.s.visible = false); smoke.visible = false;
       // boards in a row along screen-right, the first (home) on the left, one channel of open water between neighbours
       const ext = (N + HT) / 2 / Math.SQRT2, keys = Object.keys(canvases), mid = (keys.length - 1) / 2, step = 2 * ext + (keys.length > 2 ? 3.2 : 5.2);
       spread = mid * step + ext * (keys.length > 2 ? .2 : 0);                 // how far the archipelago reaches from its centre
@@ -595,8 +596,9 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       return Promise.all(list.map((a, i) => new Promise(res => setTimeout(() => { const src = Math.max(0, Math.min(N * HT - 1, (i % 2 ? 0 : N - 1) + Math.floor(Math.random() * HT) * N)); api.launch(src, a, {color: '#ff5a2e', dur: .9}).then(() => { const q = cellAt(a); ring(q.x, q.z, '#ff8a5c', 0, 2.2, .7); res(); }); }, i * 70)))); },
     // hit: squares currently burning (hit, not yet sunk) · sunk: smouldering wreck squares
     setFires(hit, sunk, key = active) {
+      if (!boards.has(key)) return;   // a board from another layout: its fires would land in open water
       fireBy.set(key, [...hit.map(c => ({c, big: true, key})), ...sunk.map(c => ({c, big: false, key}))]);
-      const spots = [...fireBy.get(active) || [], ...[...fireBy].filter(([k]) => k !== active).flatMap(([, v]) => v)].slice(0, FIRE_MAX);   // wrecks keep burning; the board in view first
+      const spots = [...fireBy.get(active) || [], ...[...fireBy].filter(([k]) => k !== active && boards.has(k)).flatMap(([, v]) => v)].slice(0, FIRE_MAX);   // wrecks keep burning; the board in view first
       fireSpots = spots.map(({c, key}) => cellAt(c, key));
       fires.forEach((f, i) => { const sp = spots[i]; if (!sp) { f.s.visible = false; return; } const p = fireSpots[i]; f.s.position.set(p.x + (f.ph % 1 - .5) * .15, .12, p.z); f.big = sp.big; f.s.visible = true; });
       smoke.visible = fireSpots.length > 0;

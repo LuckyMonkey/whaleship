@@ -23,7 +23,7 @@
     <div id="turn" class="turn" role="status" aria-live="polite"></div>
     <nav id="captains" class="captains" aria-label="Captains" hidden></nav>
     <div class="views" id="views" role="tablist" aria-label="Which cluster">
-      <button id="view-target" role="tab">🎯 enemy</button><button id="view-home" role="tab">⚓ mine</button>
+      <button id="view-ra" role="tab" hidden></button><button id="view-rb" role="tab" hidden></button><button id="view-target" role="tab">🎯 enemy</button><button id="view-home" role="tab">⚓ mine</button>
     </div>
     <div class="zoom-ctl"><button id="zoom-in" aria-label="Zoom in">＋</button><button id="zoom-out" aria-label="Zoom out">−</button></div>
     <div class="board-wrap" id="board-wrap">
@@ -90,6 +90,8 @@
   <div id="recent-wrap" hidden><p class="sheet-sub">$ docker ps — your games (play several at once; no time limits)</p><div id="recent" class="recent"></div></div>
   <div id="notify-wrap" hidden><button id="notify-enable" class="big secondary wide-btn"><span>🔔 Turn on desktop notifications</span><small>get told when it’s your move in any game</small></button></div>
   <p class="sheet-sub">$ docker compose up — start a new game</p>
+  <div class="players-tabs" role="tablist" aria-label="How many captains"><button role="tab" data-players="2" aria-selected="true">⚓⚓ 2 PLAYERS</button><button role="tab" data-players="3" aria-selected="false">⚓⚓⚓ 3 PLAYERS</button></div>
+  <div id="tab-2p" role="tabpanel">
   <div class="sizes" role="group" aria-label="Board size"><button data-size="9" title="9×9 ocean · sectors A–I · 5 vessels · about 5 minutes"><b>⚡ QUICK</b><small>9 sectors A–I · ~5 min</small></button><button data-size="36" title="18×18 ocean · sectors A–Z, 0–9 · 10 vessels"><b>🌊 FULL</b><small>★ 36 sectors · 10 vessels</small></button></div>
   <div class="rules" role="group" aria-label="Game mode"><button data-rules="classic" title="Plain salvo battleship — no specials."><b>CLASSIC</b><small>just pings</small></button><button data-rules="warfare" title="Each creature powers abilities. Specials have charges and cooldowns."><b>WARFARE</b><small>★ roles + specials</small></button><button data-rules="chaos" title="Warfare plus random Kubernetes events: self-healing, CrashLoopBackOff, drains…"><b>CHAOS</b><small>+ k8s events</small></button></div>
   <div class="mode-grid">
@@ -99,12 +101,14 @@
     <button class="big friend" data-mode="multiplayer"><span>🤝 PLAY A FRIEND</span><small>get a link · they tap it · you're playing</small></button>
   </div>
   <h3 class="trio-head">👥 3 CAPTAINS · quick · everyone fires at once</h3>
-  <p id="trio-full" class="sheet-sub trio-full" hidden>3 captains plays on the quick map: tap <b>⚡ QUICK</b> above to start one.</p>
+  </div>
+  <div id="tab-3p" role="tabpanel" hidden>
   <div class="mode-grid trio-grid">
     <button class="big primary" data-trio="cpu,cpu"><span>🤖🤖 VS 2 CPUs</span><small>you against two AI captains</small></button>
     <button class="big friend" data-trio="link,cpu"><span>🤝🤖 FRIEND + CPU</span><small>one link to send · a CPU fills the third seat</small></button>
     <button class="big friend" data-trio="link,link"><span>🤝🤝 2 FRIENDS</span><small>send the link to two people</small></button>
     <button class="big friend" data-trio="local,cpu"><span>🛋️🤖 ON THIS DEVICE + CPU</span><small>pass the phone between two of you</small></button>
+  </div>
   </div>
 </dialog>
 
