@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.20.0 — 2026-11-07
+
+**3 captains: a quick game for three.** A new mode; two-player games, and games already in progress, are unchanged.
+
+- **Three 9×9 maps**, one per captain, labelled **a–i**, **z–r** and **1–9**. Aim with the map's sector first, then the
+  square inside (`b5`, `y3`, `47`), the same way as the other modes; typing a letter or number picks that map.
+- **Everyone fires at once.** Each round every captain plans a volley of **5 pings** (more once a rival is down to its
+  last creature) and splits them freely between both rivals. The round resolves when every captain still afloat has
+  fired. A captain whose fleet is sunk is out; the last fleet afloat wins (a draw if the last two go down together).
+- **Any mix of captains:** fridge players, someone holding the invite link, a second person on the same device
+  (pass-and-play behind a curtain), and CPU captains (🐧 Penguin AI, 🐙 Squid AI). Empty seats can be filled from the
+  lobby with a link, a CPU or a local captain.
+- **Captains bar** over the map: who is aiming, who has fired, how many creatures each has left, and a **🔁 pass**
+  chip for captains sharing your device.
+
 ## 0.19.0 — 2026-11-07
 
 **Restore moves your creature.** Pinned per match (`pace` 2): games started before this release keep the old

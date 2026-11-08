@@ -57,7 +57,15 @@ let chosenRules = (() => { try { return localStorage.getItem('whaleship:rules') 
 let view = 'target', held = null, armed = null, tailVertical = false;
 const targets = new Set(), locked = new Set();
 let queue = [], animating = false, seen = 0, sliding = false, shownSonar = 0;
-const hidden = {home: new Set(), target: new Set()}, hiddenSunk = new Set(), freshSink = new Set();
+const hiddenMaps = {}, hk = k => hiddenMaps[k] ??= new Set();
+// 3 captains: "target" is whichever rival map you are looking at (aimSeat); each rival map keeps its own hidden set
+const hidden = {home: new Set(), _target: new Set(), get target() { return trioOn() ? hk('t' + aimSeat) : this._target; }}, hiddenSunk = new Set(), freshSink = new Set();
+let aimSeat = 1;
+const volley = new Map();                          // 3 captains: seat -> Set(cells) queued this round, across both rivals
+const trioOn = () => state?.players === 3;
+const multi = () => state?.mode === 'multiplayer' || state?.mode === 'trio';
+let deviceSeats = (() => { try { return JSON.parse(localStorage.getItem('whaleship:device-seats') || '{}'); } catch { return {}; } })();   // matchId -> {seat: credential}: captains playing on this device
+const saveDeviceSeats = () => { try { localStorage.setItem('whaleship:device-seats', JSON.stringify(deviceSeats)); } catch {} };
 let lastWinner = null, joining = false, justCreated = false, lastTurnMine = null;
 const autoFleet = new Set(), autoReadied = new Set(), printedFleet = new Set();
 let cmdHistory = [], drag = null, suppressClick = false;
@@ -81,10 +89,15 @@ const secOf = c => Math.floor(Math.floor(c / N) / 3) * SC() + Math.floor((c % N)
 const subOf = c => (Math.floor(c / N) % 3) * 3 + (c % N) % 3 + 1;
 const cellOf = (si, sub) => (Math.floor(si / SC()) * 3 + Math.floor((sub - 1) / 3)) * N + (si % SC()) * 3 + (sub - 1) % 3;
 const subnet = (si, enemy = true) => `${enemy ? '172.20' : '10.0'}.${si + 1}.0/24`;
-const coord = c => SECT() ? LETTERS[secOf(c)] + subOf(c) : colLabel(c % N) + (Math.floor(c / N) + 1);
+// 3 captains: every map has its own sector letters (a–i, z–r, 1–9), so "w2" names one square on one map
+const mapSeat = () => trioOn() ? (view === 'home' ? state.seat : aimSeat) : null;
+const letters = (s = mapSeat()) => s == null || !state?.labels ? LETTERS : state.labels[s].toUpperCase();
+const coord = (c, s) => SECT() ? letters(s)[secOf(c)] + subOf(c) : colLabel(c % N) + (Math.floor(c / N) + 1);
+let parsedSeat = null;
 const lc = c => coord(c).toLowerCase();
 const ip = (c, enemy) => SECT() ? `${enemy ? '172.20' : '10.0'}.${secOf(c) + 1}.${subOf(c)}` : `${enemy ? '172.20' : '10.0'}.${Math.floor(c / N) + 1}.${c % N + 1}`;
 function parseCoord(v) {
+  if (SECT() && trioOn()) { const m = /^([a-z0-9])([1-9])$/i.exec((v || '').trim()); if (!m) return -1; const seat = state.labels.findIndex(L => L.includes(m[1].toLowerCase())); if (seat < 0) return -1; parsedSeat = seat; return cellOf(state.labels[seat].indexOf(m[1].toLowerCase()), Number(m[2])); }
   if (SECT()) { const m = /^([a-z0-9])([1-9])$/i.exec((v || '').trim()), si = m ? LETTERS.indexOf(m[1].toUpperCase()) : -1; return si >= 0 && si < NSEC() ? cellOf(si, Number(m[2])) : -1; }
   const m = /^([a-z]{1,2})(\d{1,2})$/i.exec((v || '').trim()); if (!m) return -1;
   const L = m[1].toUpperCase(), x = L.length === 1 ? L.charCodeAt(0) - 65 : 26 + L.charCodeAt(1) - 65, y = Number(m[2]) - 1;
@@ -133,6 +146,23 @@ function log(text, kind = '') {
 function saveSession() { try { localStorage.setItem('whaleship:seats:' + profile.identity, JSON.stringify(seatKeys)); if (active) localStorage.setItem('whaleship:active:' + profile.identity, active); else localStorage.removeItem('whaleship:active:' + profile.identity); } catch { toast('Browser storage is blocked. Keep this tab open to keep your seat.'); } }
 function raw(v) { if (!connected || socket?.readyState !== 1) { toast('Reconnecting to the harbor…'); return false; } socket.send(JSON.stringify(v)); return true; }
 function act(type, data = {}) { if (!state || pending) return; pending = true; raw({type, session: state.id, revision: state.revision, action_id: crypto.randomUUID(), ...data}); setTimeout(() => pending = false, 3000); }
+// 3 captains: cpus = levels for the CPU seats; the remaining seats are invite links (and the host can add a captain
+// on this device or a CPU from the lobby)
+function newTrio(cpus = [], local = false) {
+  if (pending) return; pending = true; justCreated = true; pendingLocal = local;
+  prompt(`docker compose --profile classic up -d --scale captains=3 --quick${cpus.length ? ' --ai ' + cpus.join(',') : ''}${local ? ' --local-captain' : ''}`); audio.sound('select');
+  raw({type: 'CREATE_MATCH', players: 3, cpus, name: myName()}); setTimeout(() => pending = false, 10000);
+}
+let pendingLocal = false;
+const passPrompted = new Set();
+function addLocalCaptain() { if (!state || !trioOn() || state.seat !== 0) return; const name = `Captain ${state.captains.filter(x => !x.empty).length + 1}`; raw({type: 'ADD_LOCAL', session: state.id, revision: state.revision, action_id: crypto.randomUUID(), name}); }
+function addCpu(level = 'normal') { if (!state || !trioOn() || state.seat !== 0) return; act('ADD_CPU', {level}); }
+// hand the device to another captain playing on it: a curtain hides the boards, then that seat is resumed
+function passTo(seat) {
+  const cred = deviceSeats[state.id]?.[seat], name = state.captains[seat]?.name || 'the next captain'; if (!cred) return;
+  const cur = $('#pass-curtain'); $('#pass-name').textContent = name; cur.hidden = false; targets.clear(); volley.clear();
+  $('#pass-go').onclick = () => { cur.hidden = true; raw({type: 'RESUME_MATCH', session: state.id, credential: cred}); };
+}
 function newGame(mode, size = chosenSize) {
   if (pending) return; pending = true; justCreated = mode === 'multiplayer';
   prompt(`docker compose --profile ${chosenRules} up -d --scale grid=${dims(size).join('x')}${size === 9 ? ' --quick' : ''}${mode === 'multiplayer' ? ' --wait-for friend' : ' --ai ' + mode}`); audio.sound('select');
@@ -148,7 +178,7 @@ function join(id) { if (!/^[a-f0-9]{32}$/.test(id || '')) { toast('That invitati
 function historyReplace() { H.replaceState(null, '', location.pathname); }
 const gameUrl = () => profile.inviteBase || (location.origin + location.pathname.replace(/[^/]*$/, ''));   // configurable via INVITE_BASE
 const inviteUrl = id => `${gameUrl()}?j=${toShort(id)}`;
-function syncUrl() { if (state?.mode === 'multiplayer' && state.phase !== 'finished') { const q = '?j=' + toShort(state.id); if (location.search !== q || location.hash) H.replaceState(null, '', location.pathname + q); } else if (/(join|j)=/.test(location.search + location.hash)) historyReplace(); }
+function syncUrl() { if (multi() && state.phase !== 'finished') { const q = '?j=' + toShort(state.id); if (location.search !== q || location.hash) H.replaceState(null, '', location.pathname + q); } else if (/(join|j)=/.test(location.search + location.hash)) historyReplace(); }
 function showMenu() { state = null; active = null; queue = []; hidden.home.clear(); hidden.target.clear(); hiddenSunk.clear(); held = null; armed = null; targets.clear(); view = 'target'; saveSession(); syncUrl(); setSize(chosenSize); autoZoom(); render(); }
 
 function connect() {
@@ -168,6 +198,7 @@ function connect() {
     if (msg.type === 'MATCH_LIST') { onMatchList(msg.matches || []); return; }
     if (msg.type === 'MY_MATCHES') { onMyMatches(msg.matches || []); return; }
     if (msg.type === 'PUSH_OK') { pushActive = true; return; }
+    if (msg.type === 'LOCAL_SEAT' && msg.state?.id) { (deviceSeats[msg.state.id] ||= {})[msg.seat] = msg.credential; saveDeviceSeats(); toast(`🛋️ Captain ${msg.seat + 1} plays on this device: pass it over when it's their volley.`); }
     if (msg.type === 'MATCH_ENDED') { forgetGame(msg.session); toast(msg.result === 'forfeit' ? '🏳 Game ended — counted as a forfeit.' : '🗑 Game removed.'); return; }
     pending = false;
     if (msg.error) {
@@ -180,15 +211,35 @@ function connect() {
   };
 }
 
+// 3 captains: present the rival you're aiming at as "the opponent", and "your turn" as "your volley isn't in yet", so
+// the rest of the client (board, hints, terminal) works unchanged
+function adaptTrio(st) {
+  if (st.players !== 3) return st;
+  const rivals = [0, 1, 2].filter(i => i !== st.seat), ok = i => st.captains[i] && !st.captains[i].empty;
+  if (!rivals.includes(aimSeat) || !ok(aimSeat) || (st.captains[aimSeat].out != null && rivals.some(i => ok(i) && st.captains[i].out == null))) aimSeat = rivals.find(i => ok(i) && st.captains[i].out == null) ?? rivals.find(ok) ?? rivals[0];
+  const c = st.captains[aimSeat] || {};
+  st.opponent = !ok(aimSeat) ? null : {name: c.name, ready: c.ready, shots: c.shots, sunk: c.sunk || [], manifest: {}, sonar: [], roles: {}, out: c.out};
+  st.turn = st.phase === 'playing' && st.me.out == null && !st.me.fired ? st.seat : -1;
+  st.disconnect_seconds = st.captains.map(x => x?.disconnect_seconds || 0);
+  return st;
+}
+function setAim(seat, quiet = false) {
+  if (!trioOn() || seat === state.seat || !state.captains[seat] || state.captains[seat].empty) return;
+  if (targets.size || volley.has(aimSeat)) volley.set(aimSeat, new Set(targets));
+  aimSeat = seat; adaptTrio(state); targets.clear(); for (const c of volley.get(seat) || []) targets.add(c); sel = -1;
+  if (!quiet) { audio.sound('select'); render(); }
+}
+const volleyOthers = () => trioOn() ? [...volley].filter(([k]) => k !== aimSeat).reduce((n, [, v]) => n + v.size, 0) : 0;
 function onState(msg) {
-  const incoming = msg.state;
+  const incoming = adaptTrio(msg.state);
   if (deletedGames.has(incoming.id) && !joining) return;   // a late update for a game you just deleted
   if (state?.id === incoming.id && incoming.revision < state.revision) return;
   const restoring = !state || state.id !== incoming.id || msg.type === 'MATCH_RESUMED';
   const prev = restoring ? null : state;
-  if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden.target.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
+  if (restoring) { FLEET = incoming.fleet || DEFAULT_FLEET; setSize(incoming.size || 10); seen = incoming.attacks.length; queue = []; hidden.home.clear(); hidden._target.clear(); for (const k in hiddenMaps) hiddenMaps[k].clear(); volley.clear(); hiddenSunk.clear(); targets.clear(); armed = null; shownSonar = incoming.opponent?.sonar?.length || 0; clearShips(); }
   else for (const a of incoming.attacks.slice(seen)) {
     const mine = a.seat === incoming.seat;
+    if (incoming.players === 3) { (a.target === incoming.seat ? hidden.home : hk('t' + a.target)).add(a.cell); queue.push(a); continue; }
     if (!a.reveal) hidden[mine ? 'target' : 'home'].add(a.cell);
     if (a.sunk && mine) hiddenSunk.add(a.sunk.id);
     queue.push(a);
@@ -198,7 +249,8 @@ function onState(msg) {
   if (restoring) seenEvents = evs.length; const fresh = evs.slice(Math.min(seenEvents, evs.length)); seenEvents = evs.length;
   state = incoming; active = state.id;
   if (fresh.length) setTimeout(() => fresh.forEach(showEvent), queue.length ? 900 : 0);
-  if (msg.credential) { seatKeys[active] = msg.credential; saveSession(); }
+  if (msg.credential) { seatKeys[active] = msg.credential; saveSession(); if (trioOn()) { (deviceSeats[active] ||= {})[state.seat] = msg.credential; saveDeviceSeats(); } }
+  if (trioOn() && pendingLocal && state.seat === 0 && msg.type === 'MATCH_CREATED') { pendingLocal = false; setTimeout(addLocalCaptain, 200); }
   if (restoring) {
     held = null; view = deploying() ? 'home' : (myTurn() || state.phase === 'finished') ? 'target' : 'home';
     prompt(`docker compose -p ${toShort(state.id).slice(0, 8).toLowerCase()} up --attach`);
@@ -213,17 +265,23 @@ function onState(msg) {
   if (prev && !prev.opponent && state.opponent) { log(`${ts()} network connect ${state.opponent.name} → whaleship_default (172.20.0.0/16)`, 'event'); audio.sound('join'); notify(`${state.opponent.name} joined your battle`, 'Your fleet is deployed — fire away!'); }
   if (state.phase === 'finished' && prev?.phase === 'playing') log(state.winner === state.seat ? '[+] Stopping enemy stack ... done\n[+] Removing network enemy_default ... done' : 'ERROR: fleet exited with code 137 — it works on my machine', state.winner === state.seat ? 'hit' : 'error');
   if (deploying() && !state.me.ready && view !== 'home' && !sliding) view = 'home';
-  if (!myTurn()) { targets.clear(); armed = null; }
+  if (!myTurn()) { targets.clear(); volley.clear(); armed = null; }
   syncUrl();
-  if (deploying() && !state.me.ready && state.me.ships.length === 0 && !autoFleet.has(state.id)) {
-    autoFleet.add(state.id); setTimeout(() => { pending = false; act('RANDOMIZE_FLEET'); }, 60);
+  if (deploying() && !state.me.ready && state.me.ships.length === 0 && !autoFleet.has(state.id + ':' + state.seat)) {
+    autoFleet.add(state.id + ':' + state.seat); setTimeout(() => { pending = false; act('RANDOMIZE_FLEET'); }, 60);
     if (joining) toast(`You joined ${state.opponent?.name ? state.opponent.name + '’s' : 'the'} battle! Fleet auto-deployed.`);
   }
-  if (!settings.manual && autoFleet.has(state.id) && deploying() && state.me.ships.length === FLEET.length && !state.me.ready && !autoReadied.has(state.id)) {
-    autoReadied.add(state.id); setTimeout(() => { pending = false; act('READY'); }, 350);
+  if (!settings.manual && autoFleet.has(state.id + ':' + state.seat) && deploying() && state.me.ships.length === FLEET.length && !state.me.ready && !autoReadied.has(state.id + ':' + state.seat)) {
+    autoReadied.add(state.id + ':' + state.seat); setTimeout(() => { pending = false; act('READY'); }, 350);
+  }
+  // pass and play: when this captain's fleet is ready (or volley in), hand the device to a captain here who still has to act
+  if (trioOn() && !passPrompted.has(state.id + ':' + state.seat + ':' + state.phase + ':' + state.turn_number)) {
+    const here = Object.keys(deviceSeats[state.id] || {}).map(Number).filter(i => i !== state.seat && state.captains[i] && !state.captains[i].empty);
+    const waiting = here.find(i => deploying() ? state.me.ready && !state.captains[i].ready : state.phase === 'playing' && state.me.fired && state.captains[i].out == null && !state.captains[i].fired);
+    if (waiting != null) { passPrompted.add(state.id + ':' + state.seat + ':' + state.phase + ':' + state.turn_number); setTimeout(() => passTo(waiting), 900); }
   }
   joining = false;
-  if (justCreated && state.mode === 'multiplayer') { justCreated = false; openShare(); }
+  if (justCreated && multi()) { justCreated = false; if (!trioOn() || state.captains.some(x => x.empty)) openShare(); }
   const mineNow = myTurn();
   if (mineNow && lastTurnMine === false && !queue.length) { notify('Your turn in WHALESHIP', `${oppName()} fired. Your move, captain.`); audio.sound('turn'); }
   lastTurnMine = mineNow;
@@ -356,7 +414,7 @@ function openNewGame() { renderGameList(); paintSizes(); $('#new-dialog').showMo
 let qrLoaded = null;
 function loadQr() { return qrLoaded ??= new Promise((ok, no) => { const s = document.createElement('script'); s.src = './src/vendor/qrcode.min.js'; s.onload = ok; s.onerror = no; document.head.append(s); }); }
 async function openShare() {
-  if (!state || state.mode !== 'multiplayer') return;
+  if (!state || !multi()) return;
   const url = inviteUrl(state.id); $('#share-url').value = url;
   $('#share-native').hidden = !navigator.share; if (!$('#share-dialog').open) $('#share-dialog').showModal();
   try { await loadQr(); const q = window.qrcode(0, 'M'); q.addData(url); q.make(); const img = $('#share-qr'); img.src = q.createDataURL(5, 2); img.hidden = false; } catch {}
@@ -510,7 +568,7 @@ function drawPlane2() {
   c.stroke();
   if (SECT()) {   // big faded sector letters, subtle selection glow
     c.font = `900 ${cs * 1.9}px ui-monospace,Menlo,monospace`; c.textAlign = 'center'; c.textBaseline = 'middle';
-    for (let si = 0; si < NSEC(); si++) { const x = (si % SC() + .5) * cs * 3, y = (Math.floor(si / SC()) + .5) * cs * 3; c.fillStyle = si === sel && enemy ? '#ffffff55' : R3 ? '#ffffff30' : '#ffffff14'; c.fillText(LETTERS[si], x, y + cs * .1); }
+    for (let si = 0; si < NSEC(); si++) { const x = (si % SC() + .5) * cs * 3, y = (Math.floor(si / SC()) + .5) * cs * 3; c.fillStyle = si === sel && enemy ? '#ffffff55' : R3 ? '#ffffff30' : '#ffffff14'; c.fillText(letters()[si], x, y + cs * .1); }
     const hs = hover >= 0 && enemy && myTurn() && !animating && lastPointer !== 'mouse' ? secOf(hover) : -1;
     for (const [si, fill, stroke] of [[hs, '#ffffff0c', '#ffffff40'], [enemy ? sel : -1, '#ffffff18', '#ffffffb0']]) if (si >= 0) {
       const x = (si % SC()) * cs * 3, y = Math.floor(si / SC()) * cs * 3; c.fillStyle = fill; c.fillRect(x, y, cs * 3, cs * 3); c.strokeStyle = stroke; c.lineWidth = cs * .06; c.strokeRect(x + cs * .03, y + cs * .03, cs * 2.94, cs * 2.94); }
@@ -738,7 +796,7 @@ function aimAt(c) {
   if (SECT() && (armed === 'sonar' || armed === 'scan')) c = cellOf(secOf(c), 5);   // a port scan covers exactly one sector
   if (armed) {
     const p = armed, P = PI(p), own = !!P.own, r = P.rot ? rotN : 0; armed = null; area = [];
-    prompt(`${P.cmd} ${p === 'tail' && !state.rules ? `--${tailVertical ? 'col' : 'row'} ` : ''}${P.rot ? `--rotate=${r * 90} ` : ''}${ip(c, !own)}${P.pattern === 'square' && SECT() ? ` # sector ${LETTERS[secOf(c)]}` : `  # ${coord(c)}`}`);
+    prompt(`${P.cmd} ${p === 'tail' && !state.rules ? `--${tailVertical ? 'col' : 'row'} ` : ''}${P.rot ? `--rotate=${r * 90} ` : ''}${ip(c, !own)}${P.pattern === 'square' && SECT() ? ` # sector ${letters()[secOf(c)]}` : `  # ${coord(c)}`}`);
     act('POWER', {power: p, cell: c, vertical: tailVertical, rot: r});
     if (p === 'dns') { log(`${ts()} decoy A-record planted at ${coord(c)} → shows up on their scans`, 'hit'); if (!settings.reduced) fxText(cellPoint(c), '☠ DECOY', '#c9a7ff', 16); audio.sound('select'); }
     return;
@@ -746,7 +804,7 @@ function aimAt(c) {
   if (state.opponent?.shots[c] === 5) { toast(`${coord(c)} is a firewall iceberg — packets bounce off. 🐧☕`); audio.sound('error'); return; }
   if (state.opponent?.shots[c]) { toast(`${coord(c)} is already probed. Pick fresh water.`); audio.sound('error'); return; }
   if (targets.has(c)) { targets.delete(c); audio.sound('select'); render(); return; }
-  const open = state.opponent.shots.filter(v => v === 0).length, need = Math.min(salvo(), open);
+  const open = state.opponent.shots.filter(v => v === 0).length, need = Math.min(salvo() - volleyOthers(), open);
   if (settings.confirm && salvo() === 1) { targets.clear(); targets.add(c); audio.sound('select'); render(); return; }
   if (SECT() && targets.size >= need) { toast(`Queue full (${need}) — ENTER / TRANSMIT to send, ⌫ to drop the last one.`); audio.sound('error'); bump('#cta-fire'); return; }
   targets.add(c); audio.sound('packet');
@@ -755,8 +813,16 @@ function aimAt(c) {
   render();
 }
 function fireVolley() {
+  if (trioOn()) {
+    if (!myTurn()) return; volley.set(aimSeat, new Set(targets));
+    const shots = [...volley].flatMap(([seat, set]) => [...set].map(c => [seat, c])); if (!shots.length) return;
+    if (multi()) maybeAskNotify();
+    prompt(`ping -c1 ${shots.map(([seat, c]) => coord(c, seat).toLowerCase()).join(' ')}`);
+    targets.clear(); volley.clear(); sel = -1; act('FIRE', {shots});
+    return;
+  }
   if (!myTurn() || !targets.size) return;
-  if (state.mode === 'multiplayer') maybeAskNotify();
+  if (multi()) maybeAskNotify();
   const cells = [...targets]; targets.clear(); sel = -1;
   prompt(`ping -c1 ${cells.map(c => lc(c)).join(' ')}`);
   act('FIRE', {cells}); cells.forEach(c => locked.add(c)); drawPlane(); setTimeout(() => { cells.forEach(c => locked.delete(c)); drawPlane(); }, 1500);
@@ -945,16 +1011,18 @@ async function resolveStrike(a, incoming, small) {
     await sleep(settings.fast ? 450 : 1000);
   }
 }
-function takeGroup() { const a = queue.shift(), g = [a]; while (!a.reveal && queue.length && queue[0].seat === a.seat && queue[0].turn === a.turn && queue[0].power === a.power && !queue[0].reveal) g.push(queue.shift()); return g; }
+function takeGroup() { const a = queue.shift(), g = [a]; while (!a.reveal && queue.length && queue[0].seat === a.seat && queue[0].target === a.target && queue[0].turn === a.turn && queue[0].power === a.power && !queue[0].reveal) g.push(queue.shift()); return g; }
 async function playNext() {
   if (animating || !queue.length || !state) return;
   animating = true;
-  const g = takeGroup(), a = g[0], incoming = a.seat !== state.seat, power = a.power;
+  if (trioOn() && queue[0].target !== state.seat && queue[0].target !== aimSeat) setAim(queue[0].target, true);
+  const g = takeGroup(), a = g[0], incoming = trioOn() ? a.target === state.seat : a.seat !== state.seat, power = a.power;
+  if (trioOn() && a.seat !== state.seat && a.target !== state.seat) log(`${ts()} ${state.captains[a.seat]?.name} → ${state.captains[a.target]?.name}: ${g.map(x => coord(x.cell, a.target).toLowerCase() + (x.hit ? ' 💥' : ' ·')).join('  ')}`, 'event');
   const from = incoming ? 'target' : 'home', to = incoming ? 'home' : 'target', fast = settings.fast;
-  const enemyUser = {user: slug(oppName()), host: state.mode === 'multiplayer' ? 'enemy' : 'ai-captain', enemy: true};
+  const enemyUser = {user: slug(trioOn() ? state.captains[a.seat]?.name || 'captain' : oppName()), host: multi() ? 'enemy' : 'ai-captain', enemy: true};
   if (power === 'chaos') log(`[ KUBERNETES EVENT ] OOMKilled: container at ${coord(a.cell)} exceeded its memory limit`, incoming ? 'error' : 'hit');
   else if (incoming) prompt(power ? `${PI(power).cmd} ${ip(a.cell, power === 'restore')}  # ${coord(a.cell)}` : `ping -c1 ${g.map(x => lc(x.cell)).join(' ')}`, enemyUser);
-  else { stats.sent += g.length; if (!power) log(`PING 172.20.0.0/16: ${g.length} packet${g.length > 1 ? 's' : ''} → ${g.map(x => `${lc(x.cell)}(${ip(x.cell, true)})`).join(' ')}`); }
+  else if (!trioOn() || a.seat === state.seat) { stats.sent += g.length; if (!power) log(`PING 172.20.0.0/16: ${g.length} packet${g.length > 1 ? 's' : ''} → ${g.map(x => `${lc(x.cell)}(${ip(x.cell, true)})`).join(' ')}`); }
   setTurnBanner(power === 'restore' ? `💾 ${incoming ? 'ENEMY ' : ''}RESTORE` : power === 'chaos' ? '☸ OOMKilled' : incoming ? `🚨 INCOMING ${power ? PI(power).label : '×' + g.length}` : power ? `${PI(power).emoji} ${PI(power).label}!` : `📡 PING ×${g.length}`, incoming ? 'alarm' : 'mine');
   if (settings.reduced || document.hidden) {
     view = to; g.forEach(x => { hidden[to].delete(x.cell); if (x.sunk) hiddenSunk.delete(x.sunk.id); }); if (a.reveal) shownSonar = state.opponent?.sonar?.length || 0; render();
@@ -1020,7 +1088,7 @@ async function playNext() {
     if (!incoming) {
       shownSonar = state.opponent?.sonar?.length || 0; renderBoard(); fxText(p, a.masked ? `${a.found} SIGNAL${a.found === 1 ? '' : 'S'} · MASKED` : `${a.found} UP`, a.found ? '#23e4d0' : '#dff6ff', a.masked ? 18 : 26);
       const block = areaOf(a.cell, 'scan'), up = (state.opponent?.sonar || []).filter(s => s.ship && block.includes(s.cell)).map(s => lc(s.cell));
-      log(`Nmap scan report for ${SECT() ? subnet(secOf(a.cell)) + ' (sector ' + LETTERS[secOf(a.cell)] + ')' : ip(a.cell, true) + '/3x3 (' + lc(a.cell) + ')'}\n${block.length} hosts scanned · ${a.found} up${a.masked ? ' · filtered by proxy — exact hosts unknown (sink their squid to unmask)' : up.length ? ': ' + up.join(' ') : ''}\nPORT     STATE  SERVICE\n2375/tcp ${a.found ? (a.masked ? 'filtered' : 'open  ') : 'closed'} docker`, a.found ? 'hit' : '');
+      log(`Nmap scan report for ${SECT() ? subnet(secOf(a.cell)) + ' (sector ' + letters()[secOf(a.cell)] + ')' : ip(a.cell, true) + '/3x3 (' + lc(a.cell) + ')'}\n${block.length} hosts scanned · ${a.found} up${a.masked ? ' · filtered by proxy — exact hosts unknown (sink their squid to unmask)' : up.length ? ': ' + up.join(' ') : ''}\nPORT     STATE  SERVICE\n2375/tcp ${a.found ? (a.masked ? 'filtered' : 'open  ') : 'closed'} docker`, a.found ? 'hit' : '');
     } else { fxText(p, 'SCANNED', '#ff9a7c'); log(`${ts()} ⚠ ENEMY NETWORK ACTIVITY: port scan around ${lc(a.cell)}`, 'error'); }
     await sleep(fast ? 300 : 700);
   } else {
@@ -1109,7 +1177,7 @@ function renderHud() {
       else hint = salvo() > 1 ? (targets.size ? `🎯 ${need} more — or PING now` : `🎯 tap ${salvo()} squares in enemy waters`) : '🎯 tap a square in enemy waters to ping it';
       ids = [...(SECT() && !touchLayout() ? ['keypad'] : []), ...(targets.size || SECT() ? ['cta-fire'] : []), ...(specList().length ? ['specials'] : [])];
       if (SECT() && !armed && touchLayout()) hint = need <= 0 ? '📡 queue full — tap TRANSMIT' : `👆 tap ${need} square${need === 1 ? '' : 's'} on the enemy map · pinch to zoom`;
-      else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like ${SIZE === 9 ? "E5" : "J5"} · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${LETTERS[sel]} → now 1–9`;
+      else if (SECT() && !armed) hint = need <= 0 ? '⏎ queue full — TRANSMIT (Enter or Space) · ⌫ drops the last one' : sel < 0 ? `⌨ type a target like ${SIZE === 9 ? "E5" : "J5"} · ${need} packet${need === 1 ? '' : 's'} left` : `sector ${letters()[sel]} → now 1–9`;
       pulse = targets.size && (need <= 0 || settings.confirm) ? 'cta-fire' : null;
       $('#cta-fire').disabled = !targets.size;
     } else { hint = state.mode === 'multiplayer' ? `${oppName()} is aiming · no time limit — come back anytime` : '🤖 the AI is aiming…'; if (canNotify && state.mode === 'multiplayer') ids = ['cta-notify']; }
@@ -1162,12 +1230,12 @@ function renderKeypad(on) {
   document.body.classList.toggle('sect-aim', on); if (!on) return;
   const shots = shotsFor('target'), son = new Map((state?.opponent?.sonar || []).slice(0, shownSonar).map(s => [s.cell, s.fuzzy ? 'fuzzy' : s.ship]));
   const pods = state.me.ships.filter(sh => sh.cells.some(c => (state.me.shots[c] || 0) < 2)).length;
-  $('#kp-head').textContent = sel < 0 ? `k8s.production · ${armed ? PI(armed).label + ' · ' : ''}pick a SECTOR` : `SECTOR ${LETTERS[sel]} · ${subnet(sel)} · pick 1–9`;
+  $('#kp-head').textContent = sel < 0 ? `k8s.production · ${armed ? PI(armed).label + ' · ' : ''}pick a SECTOR` : `SECTOR ${letters()[sel]} · ${subnet(sel)} · pick 1–9`;
   $('#kp-cluster').textContent = `docker.local · nodes ${pods}/${FLEET.length} Ready · ⚡ ${salvo()} packet${salvo() > 1 ? 's' : ''}`;
   const grid = $('#kp-grid'), mode = sel < 0 ? 'letters' : 'digits';
   if (grid.dataset.mode !== mode || grid.dataset.n !== String(NSEC())) {
     grid.dataset.mode = mode; grid.dataset.n = NSEC(); grid.style.setProperty('--cols', mode === 'letters' ? SC() : 3);
-    grid.replaceChildren(...(mode === 'letters' ? LETTERS.slice(0, NSEC()).split('').map((L, i) => Object.assign(document.createElement('button'), {type: 'button', className: 'kl', onclick: () => selectSector(i), innerHTML: `<b>${L}</b><i></i>`}))
+    grid.replaceChildren(...(mode === 'letters' ? letters().slice(0, NSEC()).split('').map((L, i) => Object.assign(document.createElement('button'), {type: 'button', className: 'kl', onclick: () => selectSector(i), innerHTML: `<b>${L}</b><i></i>`}))
       : [1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => Object.assign(document.createElement('button'), {type: 'button', className: 'kd', onclick: () => keypad(k), innerHTML: `<b>${k}</b><i></i>`}))));
   }
   if (mode === 'letters') [...grid.children].forEach((b, si) => {
@@ -1178,7 +1246,7 @@ function renderKeypad(on) {
     const k = i + 1, c = cellOf(sel, k), m = shots[c];
     const st = m === 5 ? 'ice' : m === 4 ? 'decoy' : m === 1 ? 'miss' : m >= 2 ? 'hit' : targets.has(c) ? 'armed' : son.get(c) === 'fuzzy' ? 'signal' : son.get(c) ? 'contact' : son.has(c) ? 'clear' : '';
     b.dataset.st = st; b.disabled = m === 5 || (!!m && !(armed === 'oom' && m === 2) && !armed);
-    b.firstChild.textContent = LETTERS[sel] + k; b.lastChild.textContent = {miss: '· miss', hit: '💥 hit', armed: '● armed', contact: '◉ contact', clear: '- clear', signal: '? signal', decoy: '☠ decoy', ice: '🧊 fw'}[st] || '';
+    b.firstChild.textContent = letters()[sel] + k; b.lastChild.textContent = {miss: '· miss', hit: '💥 hit', armed: '● armed', contact: '◉ contact', clear: '- clear', signal: '? signal', decoy: '☠ decoy', ice: '🧊 fw'}[st] || '';
   });
   const q = [...targets];
   $('#queue').replaceChildren(...q.map((c, i) => Object.assign(document.createElement('button'), {type: 'button', className: 'chip', title: 'remove', onclick: () => { targets.delete(c); render(); }, textContent: `${'①②③④⑤⑥'[i]} ${coord(c)} ${ip(c, true)} ●`})),
@@ -1221,7 +1289,7 @@ function renderTitle() {
   else if (deploying() && state.mode === 'multiplayer' && !state.opponent) { t = '📨 Waiting for a friend · WHALESHIP'; f = '📨'; }
   const others = [...games.values()].filter(g => g.myTurn && g.id !== state?.id).length; if (others) t = `(${others}) ${t}`;
   if (document.title !== t) document.title = t; setFavicon(f);
-  $('#status').textContent = connected ? (state ? `● ${state.mode === 'multiplayer' ? (state.opponent ? 'vs ' + oppName() : 'waiting for a friend') : 'solo · ' + state.mode} · ${SECT() ? 'sectors' : N + '²'} · turn ${state.turn_number ?? 0}` : '● harbor online') : '○ reconnecting…';
+  $('#status').textContent = connected ? (state ? `● ${trioOn() ? '3 captains' : state.mode === 'multiplayer' ? (state.opponent ? 'vs ' + oppName() : 'waiting for a friend') : 'solo · ' + state.mode} · ${SECT() ? 'sectors' : N + '²'} · turn ${state.turn_number ?? 0}` : '● harbor online') : '○ reconnecting…';
   $('#status').classList.toggle('offline', !connected);
 }
 
@@ -1238,7 +1306,7 @@ function asciiMap(which, html = true) {
   if (SECT()) {   // sector view: 6×4 blocks of 3×3, labelled, no row/column numbers
     const out = [];
     for (let sr = 0; sr < SR(); sr++) {
-      out.push(' ' + Array.from({length: SC()}, (_, sc) => { const si = sr * SC() + sc, L = LETTERS[si]; return enemy && si === sel ? w('m-tgt', ` [${L}] `) : w('dim', `  ${L}  `); }).join('   '));
+      out.push(' ' + Array.from({length: SC()}, (_, sc) => { const si = sr * SC() + sc, L = letters()[si]; return enemy && si === sel ? w('m-tgt', ` [${L}] `) : w('dim', `  ${L}  `); }).join('   '));
       for (let r = 0; r < 3; r++) out.push(' ' + Array.from({length: SC()}, (_, sc) => [0, 1, 2].map(k => glyphAt((sr * 3 + r) * N + sc * 3 + k)).join(' ')).join(w('dim', ' │ ')));
     }
     return out.join('\n');
@@ -1272,7 +1340,7 @@ function podsText(kind = 'docker') {
 }
 let watchSig = '';
 function renderWatch() {
-  $('#release').textContent = state ? `${toShort(state.id).slice(0, 8).toLowerCase()} · ${state.mode} · ${N}x${HT}${SECT() && sel >= 0 ? ' · sector ' + LETTERS[sel] : ''}` : 'idle';
+  $('#release').textContent = state ? `${toShort(state.id).slice(0, 8).toLowerCase()} · ${state.mode} · ${N}x${HT}${SECT() && sel >= 0 ? ' · sector ' + letters()[sel] : ''}` : 'idle';
   $('#watch-clock').textContent = new Date().toString().slice(16, 24);
   if (!document.body.classList.contains('term-open') || !document.body.classList.contains('term-watch')) return;
   const wide= $('#screen-term').clientWidth >= (N * 2 + (SECT() ? 12 : 4)) * 2 * 7 + 140, maps = !state ? [] : wide ? ['target', 'home'] : [view];
@@ -1310,7 +1378,30 @@ function renderResult() {
   if (lastWinner !== state.id) { audio.sound(won ? 'victory' : 'defeat'); lastWinner = state.id; }
   if (!settings.reduced) { const set = won ? ['🎉', '🐳', '📦', '⭐', '🚀'] : ['💀', '📦', '🔥', '⚠️']; for (let i = 0; i < 18; i++) fxBurst({x: FX.w * (.05 + Math.random() * .9), y: FX.h * (.1 + Math.random() * .6)}, set[i % set.length], 30, 1100, i * 70); }
 }
-function render() { renderBoard(); paintBanner(); renderHud(); renderTitle(); renderWatch(); renderResult(); }
+function render() { renderBoard(); paintBanner(); renderHud(); renderTitle(); renderWatch(); renderResult(); paintCaptains(); }
+function paintCaptains() {
+  const bar = $('#captains'); if (!bar) return;
+  if (!trioOn()) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const span = s => state.labels[s][0] + '–' + state.labels[s][8], mine = deviceSeats[state.id] || {};
+  const chip = (i, label, on, click, extra = '') => { const b = document.createElement('button'); b.type = 'button'; b.className = 'cap' + (on ? ' on' : '') + extra; b.innerHTML = label; b.onclick = click; return b; };
+  const kids = [chip(state.seat, `🌊 <b>You</b><small>${span(state.seat)}${state.me.out != null ? ' · ☠ out' : state.me.fired ? ' · ✓ fired' : ''}</small>`, view === 'home', () => slideTo('home'))];
+  for (const i of [0, 1, 2]) {
+    if (i === state.seat) continue;
+    const c = state.captains[i];
+    if (c.empty) {
+      if (state.seat === 0 && state.phase === 'lobby') kids.push(chip(i, `➕ <b>Seat ${i + 1}</b><small>link · 🤖 CPU · 🛋️ here</small>`, false, () => { const k = $('#seat-fill'); k.dataset.seat = i; k.showModal(); }, ' empty'));
+      else kids.push(chip(i, `⏳ <b>Seat ${i + 1}</b><small>waiting for a captain</small>`, false, () => openShare(), ' empty'));
+      continue;
+    }
+    const n = (volley.get(i)?.size || 0) + (i === aimSeat ? targets.size : 0) - (i === aimSeat && volley.has(i) ? volley.get(i).size : 0);
+    const st = c.out != null ? '☠ out' : state.phase === 'playing' ? (c.fired ? '✓ fired' : c.ai ? '🤖 aiming' : '⏳ aiming') : c.ready ? '✓ ready' : '⚓ deploying';
+    kids.push(chip(i, `${c.ai ? '🤖' : c.local ? '🛋️' : '⚓'} <b>${esc(c.name)}</b><small>${span(i)} · ${st}${n ? ` · ${n} queued` : ''}</small>`, view !== 'home' && aimSeat === i, () => { setAim(i); if (view !== 'target') slideTo('target'); }, c.out != null ? ' out' : ''));
+    if (mine[i] != null && i !== state.seat) kids.push(chip(i, `🔁 <small>pass to ${esc(c.name)}</small>`, false, () => passTo(i), ' pass'));
+  }
+  bar.replaceChildren(...kids);
+}
+const esc = t => String(t).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[ch]);
 
 /* ---------------- notifications ---------------- */
 function notify(title, body) { if (pushActive || !document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return; try { const n = new Notification(title, {body, tag: 'whaleship'}); n.onclick = () => { window.focus(); n.close(); }; } catch {} }
@@ -1338,8 +1429,8 @@ function command(line) {
     const sp = specList().find(x => x.id === p); if (!sp?.ok) return log(`${cmd}: ${sp?.why || 'not available in this mode'}`, 'error');
     view = PI(p).own ? 'home' : 'target'; render(); act('POWER', {power: p, cell: c, vertical: parts.includes('v')}); return;
   }
-  if (cmd === 'target' || cmd === 'cd') { const L = (parts[1] || '').toUpperCase(); if (!SECT()) return log('target: only on the sector map (new 15)', 'error'); if (!(L.length === 1 && LETTERS.indexOf(L) >= 0 && LETTERS.indexOf(L) < NSEC())) return log(`usage: target K   (sectors A–${LETTERS[NSEC() - 1]})`, 'error'); selectSector(LETTERS.indexOf(L)); const si = LETTERS.indexOf(L), open = [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(k => !(state?.opponent?.shots[cellOf(si, k)])).length; log(`ENTERING SECTOR ${L} · ${subnet(si)}\n${open} ADDRESSES AVAILABLE`, 'event'); return; }
-  if (cmd === 'fire' && SECT() && /^[1-9]$/.test(parts[1] || '')) { if (sel < 0) return log('fire: no sector selected (try: target K)', 'error'); if (!myTurn()) return log('Error response from daemon: not your turn', 'error'); log(`TARGET RESOLVED: ${LETTERS[sel]}${parts[1]} (${ip(cellOf(sel, Number(parts[1])), true)}) · DEPLOYING PACKET…`, 'hit'); keypad(Number(parts[1])); return; }
+  if (cmd === 'target' || cmd === 'cd') { const L = (parts[1] || '').toUpperCase(); if (!SECT()) return log('target: only on the sector map (new 15)', 'error'); if (!(L.length === 1 && LETTERS.indexOf(L) >= 0 && LETTERS.indexOf(L) < NSEC())) return log(`usage: target K   (sectors A–${letters()[NSEC() - 1]})`, 'error'); selectSector(LETTERS.indexOf(L)); const si = LETTERS.indexOf(L), open = [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(k => !(state?.opponent?.shots[cellOf(si, k)])).length; log(`ENTERING SECTOR ${L} · ${subnet(si)}\n${open} ADDRESSES AVAILABLE`, 'event'); return; }
+  if (cmd === 'fire' && SECT() && /^[1-9]$/.test(parts[1] || '')) { if (sel < 0) return log('fire: no sector selected (try: target K)', 'error'); if (!myTurn()) return log('Error response from daemon: not your turn', 'error'); log(`TARGET RESOLVED: ${letters()[sel]}${parts[1]} (${ip(cellOf(sel, Number(parts[1])), true)}) · DEPLOYING PACKET…`, 'hit'); keypad(Number(parts[1])); return; }
   if (cmd === 'help') return log('Usage:  <command> [args]      (coordinates like e4 · nothing here touches a real host)\n\n  ping E4 [F5 …]          fire your salvo          (also: docker kill)\n  nmap K5 · traceroute K5 · hping3 K5 · oom K5      specials (warfare/chaos)\n  dnsmasq K5 · restic K5  decoy / repair in YOUR waters (free actions)\n  target K · fire 5       sector map: pick sector K, fire at K5\n  nmap E4                 PORT SCAN a 3×3 block    (reveals, no damage)\n  hping3 E4               SYN FLOOD a 3×3 block    (damage)\n  traceroute E4 [v]       TRACEROUTE a line of 5   (damage; v = column)\n  docker ps · map [mine]  fleet table · ASCII network map\n  new [easy|normal|hard|friend] [quick|full] [classic|warfare|chaos]\n  invite · shuffle · ready · status · whoami · history · clear · fullscreen · exit');
   if (line.startsWith('docker ps') || cmd === 'fleet') return log(podsText());
   if (line.startsWith('kubectl get pods') || line.startsWith('docker service ps')) return log(podsText('k8s'));
@@ -1379,6 +1470,13 @@ $('#share-url').onclick = () => $('#share-url').select();
 $('#new-game').onclick = () => openNewGame(); $('#games-btn').onclick = () => openNewGame();
 $('#end-btn').onclick = () => { if (!state || state.phase === 'finished') return; $('#leave-warning').textContent = state.phase === 'playing' ? 'End this game now? It counts as a forfeit — your opponent wins.' : 'Close this game? Nobody has started playing yet.'; $('#leave-dialog').showModal(); };
 $('#notify-enable').onclick = async () => { try { const p = await Notification.requestPermission(); if (p === 'granted') registerPush(); toast(p === 'granted' ? '🔔 Notifications on — we’ll tell you when it’s your move in any game, even with WHALESHIP closed.' : 'Notifications stay off. The 🗂 badge and tab title still show waiting games.'); } catch {} renderGameList(); };
+document.querySelectorAll('#new-dialog [data-trio]').forEach(b => b.onclick = () => {
+  $('#new-dialog').close(); $('#result-overlay').hidden = true; openTerminal(false);
+  const seats = b.dataset.trio.split(','); newTrio(seats.filter(x => x === 'cpu').map(() => 'normal'), seats.includes('local'));
+});
+$('#fill-link').onclick = () => { $('#seat-fill').close(); openShare(); };
+$('#fill-cpu').onclick = () => { $('#seat-fill').close(); addCpu('normal'); };
+$('#fill-local').onclick = () => { $('#seat-fill').close(); addLocalCaptain(); };
 document.querySelectorAll('#new-dialog [data-mode]').forEach(b => b.onclick = () => { $('#new-dialog').close(); $('#result-overlay').hidden = true; openTerminal(false); newGame(b.dataset.mode, chosenSize); });
 $('#cta-shuffle').onclick = () => { held = null; act('RANDOMIZE_FLEET'); audio.sound('place'); };
 $('#cta-ready').onclick = () => act('READY');
@@ -1413,6 +1511,11 @@ document.addEventListener('keydown', e => {
   if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { if (e.key === 'Escape') openTerminal(false); return; }
   const k = e.key.toLowerCase();
   if (SECT() && myTurn() && !animating && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (trioOn() && (/^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)))) {           // 3 captains: the letter picks the map too
+      const seat = state.labels.findIndex(L => L.includes(k));
+      if (seat >= 0 && seat !== state.seat && state.captains[seat]?.out == null) { e.preventDefault(); if (aimSeat !== seat) setAim(seat, true); if (view !== 'target') slideTo('target'); selectSector(state.labels[seat].indexOf(k)); return; }
+      if (seat === state.seat) { e.preventDefault(); toast('That’s your own map - aim at a rival’s letters.'); return; }
+    }
     const li = /^[a-z]$/.test(k) || (sel < 0 && /^[0-9]$/.test(k)) ? LETTERS.indexOf(k.toUpperCase()) : -1;
     if (li >= 0 && li < NSEC()) { e.preventDefault(); if (view !== 'target' && !(armed && PI(armed).own)) slideTo('target'); selectSector(li); return; }
     if (/^[1-9]$/.test(k)) { e.preventDefault(); keypad(Number(k)); return; }

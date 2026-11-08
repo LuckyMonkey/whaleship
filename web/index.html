@@ -20,6 +20,7 @@
     <div class="foam-wrap" aria-hidden="true"><div class="foam-plane" id="foam-plane"><canvas id="foam" class="foam"></canvas></div></div>
     <div id="life" class="life" aria-hidden="true"></div>
     <div id="turn" class="turn" role="status" aria-live="polite"></div>
+    <nav id="captains" class="captains" aria-label="Captains" hidden></nav>
     <div class="views" id="views" role="tablist" aria-label="Which cluster">
       <button id="view-target" role="tab">🎯 enemy</button><button id="view-home" role="tab">⚓ mine</button>
     </div>
@@ -87,8 +88,23 @@
     <button class="big primary" data-mode="hard"><span>🐋 SOLO · HARD</span><small>probability whale</small></button>
     <button class="big friend" data-mode="multiplayer"><span>🤝 PLAY A FRIEND</span><small>get a link · they tap it · you're playing</small></button>
   </div>
+  <h3 class="trio-head">👥 3 CAPTAINS · quick · everyone fires at once</h3>
+  <div class="mode-grid trio-grid">
+    <button class="big primary" data-trio="cpu,cpu"><span>🤖🤖 VS 2 CPUs</span><small>you against two AI captains</small></button>
+    <button class="big friend" data-trio="link,cpu"><span>🤝🤖 FRIEND + CPU</span><small>one link to send · a CPU fills the third seat</small></button>
+    <button class="big friend" data-trio="link,link"><span>🤝🤝 2 FRIENDS</span><small>send the link to two people</small></button>
+    <button class="big friend" data-trio="local,cpu"><span>🛋️🤖 ON THIS DEVICE + CPU</span><small>pass the phone between two of you</small></button>
+  </div>
 </dialog>
 
+<dialog id="seat-fill" class="sheet"><form method="dialog" class="sheet-head"><h2>Fill this seat</h2><button class="x" aria-label="Close">×</button></form>
+  <div class="mode-grid">
+    <button class="big friend" id="fill-link"><span>🤝 SEND A LINK</span><small>a friend or anyone with the link takes the seat</small></button>
+    <button class="big primary" id="fill-cpu"><span>🤖 ADD A CPU</span><small>a walrus-grade AI captain</small></button>
+    <button class="big secondary" id="fill-local"><span>🛋️ SOMEONE HERE</span><small>a second captain on this device · pass it between volleys</small></button>
+  </div>
+</dialog>
+<div id="pass-curtain" class="pass-curtain" hidden><div><p>🛋️ Pass the device to</p><h2 id="pass-name">the next captain</h2><p class="small">No peeking at each other's fleets.</p><button id="pass-go" class="big primary"><span>I'M READY</span></button></div></div>
 <dialog id="share-dialog" class="sheet"><form method="dialog" class="sheet-head"><h2>📨 Send this to a friend</h2><button class="x" aria-label="Close">×</button></form>
   <p class="sheet-sub">They tap it and they're in — no account, no setup.</p>
   <input id="share-url" class="share-url" readonly aria-label="Invite link">

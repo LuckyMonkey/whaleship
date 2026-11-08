@@ -578,6 +578,7 @@ function fire(m, s, msg) {
 const TRIO_LABELS = ['abcdefghi', 'zyxwvutsr', '123456789'];
 const TRIO_SALVO = 5;                                         // 2-player quick is 3: more shots, shorter games
 const TRIO_AI = { easy: '🐧 Easy AI', normal: '🦭 Walrus AI', hard: '🐋 Whale AI' };
+const TRIO_CPU = ['🦭 Walrus AI', '🐧 Penguin AI', '🐙 Squid AI'];   // one name per seat, so two CPUs never share one
 const trio = m => m.players === 3;
 const alive = (m, i) => !!m.seats[i] && m.seats[i].out == null;
 const trioSalvo = (m, s) => {
@@ -593,7 +594,7 @@ function trioCreate(ws, msg) {
     started: null, finished: null, attacks: [], seats: [null, null, null] };
   m.seats[0] = newSeat(ws.identity, ws.authed ? ws.name : clean(msg.name) || ws.name, m);
   const cpus = (Array.isArray(msg.cpus) ? msg.cpus : []).slice(0, 2).map(l => TRIO_AI[l] ? l : 'normal');
-  cpus.forEach((lvl, i) => { const ai = newSeat('ai:' + lvl, TRIO_AI[lvl], m, lvl); ai.ships = randomFleet(size, m.fleet, m.firewalls); ai.ready = true; m.seats[1 + i] = ai; });
+  cpus.forEach((lvl, i) => { const ai = newSeat('ai:' + lvl, TRIO_CPU[1 + i], m, lvl); ai.ships = randomFleet(size, m.fleet, m.firewalls); ai.ready = true; m.seats[1 + i] = ai; });
   if (m.seats.every(Boolean)) m.phase = 'deploy';
   matches.set(m.id, m);
   const cred = issue(m.seats[0]); attach(ws, m, 0); persist(m);
@@ -613,7 +614,7 @@ function trioAddCpu(m, s, msg) {
   if (s !== 0) return 'Only the host can add a CPU captain.';
   if (m.phase !== 'lobby') return 'The crew is already complete.';
   const free = m.seats.findIndex(x => !x); if (free < 0) return 'All three seats are taken.';
-  const lvl = TRIO_AI[msg.level] ? msg.level : 'normal', ai = newSeat('ai:' + lvl, TRIO_AI[lvl], m, lvl);
+  const lvl = TRIO_AI[msg.level] ? msg.level : 'normal', ai = newSeat('ai:' + lvl, TRIO_CPU[free], m, lvl);
   ai.ships = randomFleet(m.size, m.fleet, m.firewalls); ai.ready = true; m.seats[free] = ai;
   if (m.seats.every(Boolean)) m.phase = 'deploy';
   return null;

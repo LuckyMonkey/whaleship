@@ -441,3 +441,18 @@ body:not([data-phase=menu]) .hud-signin{display:none}
 #sea { transition: opacity .17s ease; }
 body.switching #sea { opacity: .15; }
 @media (prefers-reduced-motion: reduce) { #sea { transition: none; } }
+
+/* 3 captains: the captains bar (your map + each rival), seat filling, pass-and-play curtain */
+.captains{position:absolute;top:136px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 16px)}
+.captains .cap{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 12px;border-radius:14px;border:2px solid #04121c;background:#e9f8ff;color:#04121c;font:800 13px/1.15 Nunito,system-ui,sans-serif;box-shadow:0 3px 0 #04121c;cursor:pointer}
+.captains .cap b{font-family:'Lilita One',system-ui,sans-serif;font-weight:400;font-size:15px;max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.captains .cap small{font-size:11px;font-weight:800;opacity:.75}
+.captains .cap.on{background:var(--yellow);transform:translateY(-1px)}
+.captains .cap.out{opacity:.55;text-decoration:line-through}
+.captains .cap.empty{background:#fff;border-style:dashed}
+.captains .cap.pass{background:#d9ffe9;flex-direction:row;align-items:center}
+.trio-head{margin:18px 4px 8px;font:400 18px 'Lilita One',system-ui,sans-serif;color:#e9f8ff}
+.pass-curtain{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#04121cf2;color:#e9f8ff;text-align:center}
+.pass-curtain h2{font:400 44px 'Lilita One',system-ui,sans-serif;margin:6px 0 4px;color:var(--yellow)}
+.pass-curtain .small{opacity:.7;margin-bottom:18px}
+@media (max-width:700px){.captains{top:118px}.captains .cap{padding:5px 9px}.captains .cap b{font-size:13px}}
