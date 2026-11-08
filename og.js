@@ -40,27 +40,37 @@ function cta(text, x, y, sub) {
     `<path d="M${w - 66} 26 L${w - 30} 46 L${w - 66} 66 Z" fill="#1d63ed" stroke="#04121c" stroke-width="4" stroke-linejoin="round"/></g>` +
     (sub ? T(sub, x + 6, y + h + 44, 22, '#9fd8ea', 800) : '');
 }
-// Cartoon mascot: a smiling Docker-ish whale with a container rack, a spout, and a speech bubble.
+// Cartoon mascot: a side-on whale facing right - big round head, a body that tapers into a raised two-lobed fluke,
+// a flipper, a jaw-line smile, a pale belly with throat grooves, a blowhole spout, and the Docker-ish container stack
+// tucked onto its back (drawn first, so the body overlaps the boxes' bottoms). Flat fills, one bold outline, no wobble.
 function whale(x, y, s, say, mood = 'happy') {
+  const O = 'stroke="#04121c" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"';
   const eye = mood === 'dizzy'
-    ? '<path d="M258 108 L282 132 M282 108 L258 132" stroke="#04121c" stroke-width="7" stroke-linecap="round"/>'
-    : '<circle cx="270" cy="118" r="17" fill="#fff" stroke="#04121c" stroke-width="5"/><circle cx="274" cy="121" r="9" fill="#04121c"/><circle cx="277" cy="116" r="3.5" fill="#fff"/>';
-  const mouth = mood === 'dizzy' ? '<path d="M250 168 Q262 156 274 168 Q286 180 298 166" stroke="#04121c" stroke-width="6" fill="none" stroke-linecap="round"/>'
-    : '<path d="M246 158 Q276 190 306 156" stroke="#04121c" stroke-width="6" fill="#ff8fb1" stroke-linecap="round"/>';
+    ? '<path d="M290 116 L312 138 M312 116 L290 138" stroke="#04121c" stroke-width="7" stroke-linecap="round"/>'
+    : '<circle cx="300" cy="126" r="16" fill="#fff" stroke="#04121c" stroke-width="5"/><circle cx="304" cy="129" r="8.5" fill="#04121c"/><circle cx="307" cy="124" r="3.2" fill="#fff"/>';
+  const mouth = mood === 'dizzy'
+    ? '<path d="M350 166 Q338 158 326 168 Q314 178 300 168" fill="none" ' + O + '/>'
+    : '<path d="M351 160 C336 178 306 184 282 172" fill="none" ' + O + '/><path d="M284 166 C280 170 279 176 282 180" fill="none" stroke="#04121c" stroke-width="5" stroke-linecap="round"/>';
   const bw = Math.round(say.length * 15.5 + 48);
   return `<g transform="translate(${x} ${y}) scale(${s})">
   <g transform="translate(${330 - bw} -150) rotate(3)"><rect x="3" y="6" width="${bw}" height="68" rx="22" fill="#04121c"/><rect width="${bw}" height="68" rx="22" fill="#fff" stroke="#04121c" stroke-width="5"/><path d="M${bw - 90} 64 L${bw - 70} 100 L${bw - 50} 64 Z" fill="#fff" stroke="#04121c" stroke-width="5" stroke-linejoin="round"/><rect x="${bw - 95}" y="58" width="50" height="9" fill="#fff"/>
     <text x="${bw / 2}" y="45" text-anchor="middle" font-family="Lilita One" font-size="30" fill="#04121c">${esc(say)}</text></g>
-  <g fill="#9fe6ff" stroke="#04121c" stroke-width="4" stroke-linejoin="round"><path transform="translate(292 30) rotate(-32)" d="M0 0 C-12 -16 -10 -34 0 -48 C10 -34 12 -16 0 0 Z"/><path transform="translate(300 26) scale(1.15)" d="M0 0 C-12 -16 -10 -34 0 -48 C10 -34 12 -16 0 0 Z"/><path transform="translate(308 30) rotate(32)" d="M0 0 C-12 -16 -10 -34 0 -48 C10 -34 12 -16 0 0 Z"/><circle cx="246" cy="-40" r="7"/><circle cx="356" cy="-44" r="6"/></g>
-  <path d="M58 150 C34 128 18 96 2 66 C30 70 52 92 64 116 C70 84 88 62 116 50 C104 88 88 122 72 152 Z" fill="#1d63ed" stroke="#04121c" stroke-width="6" stroke-linejoin="round"/>
-  <path d="M40 140 C40 76 126 40 214 44 C298 48 344 100 344 152 C344 210 280 232 196 232 C106 232 40 206 40 140 Z" fill="#1d63ed" stroke="#04121c" stroke-width="6"/>
-  <path d="M72 180 C130 222 262 222 330 176 C318 210 266 226 198 226 C130 226 88 210 72 180 Z" fill="#cfeaff"/>
+  <path d="M40 252 C80 240 120 264 160 252 C200 240 240 264 280 252 C310 243 336 256 360 250" fill="none" stroke="#9fe6ff" stroke-width="7" stroke-linecap="round" opacity=".7"/>
   <g stroke="#04121c" stroke-width="5" stroke-linejoin="round">
-    <rect x="112" y="-2" width="62" height="46" rx="4" fill="#ffcb3b"/><rect x="176" y="-2" width="62" height="46" rx="4" fill="#ff754f"/><rect x="138" y="-44" width="62" height="44" rx="4" fill="#23e4d0"/>
+    <rect x="146" y="18" width="58" height="50" rx="5" fill="#ffcb3b"/><rect x="206" y="18" width="58" height="50" rx="5" fill="#ff754f"/><rect x="176" y="-24" width="58" height="44" rx="5" fill="#23e4d0"/>
   </g>
-  <g stroke="#04121c" stroke-width="3" opacity=".45"><path d="M128 6v30M143 6v30M158 6v30M192 6v30M207 6v30M222 6v30M154 -36v28M169 -36v28M184 -36v28"/></g>
-  ${eye}<ellipse cx="300" cy="150" rx="15" ry="8" fill="#ff8fb1" opacity=".75"/>${mouth}
-  <path d="M150 170 C170 196 206 200 226 176" stroke="#0b3fa8" stroke-width="5" fill="none" stroke-linecap="round" opacity=".6"/>
+  <g stroke="#04121c" stroke-width="3" opacity=".4"><path d="M161 26v34M175 26v34M189 26v34M221 26v34M235 26v34M249 26v34M191 -16v28M205 -16v28M219 -16v28"/></g>
+  <path d="M44 132 C30 108 6 92 -20 94 C-8 110 6 124 22 134 C4 142 -14 158 -24 180 C2 178 28 162 44 146 Z" fill="#1d63ed" ${O}/>
+  <path d="M352 150 C352 96 304 60 226 60 C160 60 118 86 90 118 C76 134 62 132 42 130 L44 150 C62 152 76 172 104 198 C146 228 208 236 262 234 C324 232 352 204 352 150 Z" fill="#1d63ed" ${O}/>
+  <rect x="34" y="134" width="18" height="12" fill="#1d63ed"/>
+  <path d="M112 194 C150 222 206 232 262 230 C318 228 348 202 351 166 C334 192 302 204 258 206 C204 210 152 206 112 194 Z" fill="#cfeaff"/>
+  <g stroke="#9cc8ec" stroke-width="4" stroke-linecap="round"><path d="M214 214 C246 220 284 216 312 204M226 223 C258 228 292 223 322 210"/></g>
+  <path d="M150 94 C192 72 252 66 296 82 C252 78 196 86 160 106 Z" fill="#fff" opacity=".22"/>
+  <path d="M256 186 C258 214 246 236 222 250 C250 254 276 234 282 198 Z" fill="#1650c8" ${O}/>
+  <ellipse cx="302" cy="70" rx="9" ry="4" fill="#04121c"/>
+  <g fill="none" stroke-linecap="round"><g stroke="#04121c" stroke-width="15"><path d="M300 66 C296 40 282 24 262 18"/><path d="M304 66 C310 40 326 24 346 20"/></g><g stroke="#9fe6ff" stroke-width="7"><path d="M300 66 C296 40 282 24 262 18"/><path d="M304 66 C310 40 326 24 346 20"/></g></g>
+  <g fill="#9fe6ff" stroke="#04121c" stroke-width="4"><circle cx="252" cy="4" r="7"/><circle cx="358" cy="2" r="6"/><circle cx="304" cy="10" r="5"/></g>
+  ${eye}<ellipse cx="320" cy="168" rx="13" ry="7" fill="#ff8fb1" opacity=".8"/>${mouth}
 </g>`;
 }
 function pips(total, sunk, x, y) {   // one hull per vessel: filled = afloat, red X = sunk
