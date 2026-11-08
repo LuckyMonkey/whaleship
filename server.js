@@ -97,7 +97,7 @@ function specialsView(m, me) {
   });
 }
 // Container identities: generated once per match from its id (stable across reconnects/restarts), unique in the match.
-function ensureManifest(m) { if (!m.manifest) { const used = new Set(); m.manifest = [0, 1].map(seat => names.manifest(m.id, seat, m.fleet, used)); } return m.manifest; }
+function ensureManifest(m) { if (!m.manifest) { const used = new Set(); m.manifest = (m.players === 3 ? [0, 1, 2] : [0, 1]).map(seat => names.manifest(m.id, seat, m.fleet, used)); } return m.manifest; }
 function pushEvent(m, ev) { (m.events ||= []).push({ turn: m.turn_number, ...ev }); if (m.events.length > 40) m.events.shift(); }
 const CHAOS = [['selfheal', 2], ['crashloop', 3], ['imagepull', 2], ['dnsfail', 2], ['rolling', 2], ['drain', 2], ['oomkilled', 1]];
 function chaosEvent(m, s) {
@@ -183,7 +183,7 @@ function migrate(m) {
 function validate(m) {
   const { w, h } = DIM(m.size), n = w * h, bad = [];
   if (!m.id || !SIZES.includes(m.size)) bad.push('id/size');
-  if (!Array.isArray(m.seats) || m.seats.length !== 2) bad.push('seats');
+  if (!Array.isArray(m.seats) || m.seats.length !== (m.players === 3 ? 3 : 2)) bad.push('seats');
   else m.seats.forEach((st, i) => { if (!st) return; if (!Array.isArray(st.board) || st.board.length !== n) bad.push(`seat${i}.board`); if ((st.ships || []).some(sh => sh.cells.some(c => c < 0 || c >= n))) bad.push(`seat${i}.ships`); });
   if (!Array.isArray(m.fleet)) bad.push('fleet');
   return bad;
@@ -243,6 +243,7 @@ function leaderboard(mode, period) {
 /* ---------------- views + broadcast ---------------- */
 const sockets = new Map();  // matchId -> Set(ws)
 function view(m, s) {
+  if (trio(m)) return trioView(m, s);
   const me = m.seats[s], op = m.seats[1 - s], t = now(), mf = ensureManifest(m);
   const gone = x => !x ? 0 : x.ai || x.connected ? 0 : Math.floor((t - (x.lastSeen || t)) / 1000);
   return {
@@ -288,6 +289,7 @@ function issue(seat) { const cred = rid(24), h = sha(cred); seat.credHash = h; s
 const credOk = (seat, cred) => !!seat && !!cred && (seat.credHash === sha(String(cred)) || (seat.credHashes || []).includes(sha(String(cred))));
 function createMatch(ws, msg) {
   if ([...matches.values()].filter(m => m.phase !== 'finished').length >= MAX_ACTIVE) return send(ws, { error: 'The harbor is full right now. Try again soon.' });
+  if (Number(msg.players) === 3) return trioCreate(ws, msg);
   const mode = ['multiplayer', 'easy', 'normal', 'hard'].includes(msg.mode) ? msg.mode : 'normal';
   const size = SIZES.includes(Number(msg.size)) ? Number(msg.size) : 36, rules = RULES.includes(msg.rules) ? msg.rules : 'warfare';
   const { w, h } = DIM(size), fw = new Set();
@@ -317,6 +319,16 @@ function joinMatch(ws, msg, resume) {
     send(ws, { type: 'MATCH_RESUMED', state: view(m, seat), credential: cred });
     return broadcast(m, 'PRESENCE');
   }
+  if (trio(m)) {                                              // the next free seat of a 3-captain battle
+    const free = m.seats.findIndex(x => !x);
+    if (m.phase !== 'lobby' || free < 0) return send(ws, { error: m.phase === 'finished' ? 'That battle is over.' : 'That battle is full.' });
+    m.seats[free] = newSeat(ws.identity, ws.authed ? ws.name : clean(msg.name) || ws.name, m);
+    if (m.seats.every(Boolean)) m.phase = 'deploy';
+    const cred = issue(m.seats[free]); attach(ws, m, free); m.revision++; persist(m);
+    send(ws, { type: 'PLAYER_JOINED', state: view(m, free), credential: cred });
+    for (const o of sockets.get(m.id) || []) if (o !== ws) send(o, { type: 'PLAYER_JOINED', state: view(m, o.seat) });
+    return;
+  }
   if (m.mode !== 'multiplayer' || m.seats[1]) return send(ws, { error: m.phase === 'finished' ? 'That battle is over.' : 'That match is full.' });
   m.seats[1] = newSeat(ws.identity, ws.authed ? ws.name : clean(msg.name) || ws.name, m);
   m.phase = 'deploy';
@@ -331,9 +343,9 @@ function listMatches(ws, msg) {
   const list = (Array.isArray(msg.matches) ? msg.matches : []).slice(0, 30).map(x => {
     const m = matches.get(String(x && x.session || '')); if (!m || !x.credential) return null;
     const seat = m.seats.findIndex(s => credOk(s, x.credential)); if (seat < 0 || m.seats[seat].hidden) return null;
-    const op = m.seats[1 - seat];
-    return { id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
-      opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision };
+    const op = trio(m) ? null : m.seats[1 - seat], rivals = trio(m) ? m.seats.filter((x, i) => x && i !== seat).map(x => x.name).join(' & ') : null;
+    return { id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && (trio(m) ? alive(m, seat) && !m.volleys[seat] : m.turn === seat),
+      opponent: rivals || (op ? op.name : null), turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision };
   }).filter(Boolean);
   send(ws, { type: 'MATCH_LIST', matches: list });
 }
@@ -345,7 +357,8 @@ function endMatch(ws, msg) {
   if (seat < 0 && ws.authed) seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity);   // signed-in: your account owns the seat
   if (seat < 0) return send(ws, { error: 'That isn’t your game.' });
   m.seats[seat].hidden = true;   // deleted from your games list: never offered back to you (any device)
-  if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); notifyMatch(m, { phase: 'playing', turn: m.turn, opp: true }); }
+  if (m.phase === 'playing' && trio(m)) { trioOut(m, seat, 'left'); m.revision++; persist(m); broadcast(m, m.phase === 'finished' ? 'MATCH_FINISHED' : 'STATE'); }
+  else if (m.phase === 'playing') { finish(m, 1 - seat, 'forfeit'); m.revision++; persist(m); broadcast(m, 'MATCH_FINISHED'); notifyMatch(m, { phase: 'playing', turn: m.turn, opp: true }); }
   else if (m.phase !== 'finished') { m.phase = 'finished'; m.finished = Math.floor(now() / 1000); m.reason = 'closed'; m.revision++; persist(m); for (const o of sockets.get(m.id) || []) send(o, { type: 'MATCH_CLOSED' }); }
   persist(m);
   send(ws, { type: 'MATCH_ENDED', session: m.id, result: m.reason, hidden: true });
@@ -357,9 +370,9 @@ function myMatches(ws) {
   for (const m of matches.values()) {
     const seat = m.seats.findIndex(s => s && !s.ai && s.identity === ws.identity); if (seat < 0 || m.seats[seat].hidden) continue;
     if (m.phase === 'finished' && (m.reason === 'closed' || (m.finished || 0) < recent)) continue;
-    const op = m.seats[1 - seat];
-    list.push({ id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && m.turn === seat,
-      opponent: op ? op.name : null, turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision, updated: m.updated || m.created });
+    const op = trio(m) ? null : m.seats[1 - seat], rivals = trio(m) ? m.seats.filter((x, i) => x && i !== seat).map(x => x.name).join(' & ') : null;
+    list.push({ id: m.id, mode: m.mode, size: m.size, rules: m.rules || null, phase: m.phase, seat, myTurn: m.phase === 'playing' && (trio(m) ? alive(m, seat) && !m.volleys[seat] : m.turn === seat),
+      opponent: rivals || (op ? op.name : null), turn_number: m.turn_number, winner: m.winner, reason: m.reason, revision: m.revision, updated: m.updated || m.created });
   }
   send(ws, { type: 'MY_MATCHES', matches: list.sort((a, b) => b.updated - a.updated).slice(0, 30) });
 }
@@ -407,7 +420,7 @@ function legalPlacement(m, seat, shipId, cells) {
   return cells.every(c => !taken.has(c) && seat.board[c] !== 5);
 }
 function maybeStart(m) {
-  if (m.seats.every(s => s && s.ready) && ['deploy', 'lobby'].includes(m.phase)) { m.phase = 'playing'; m.turn = 0; m.turn_number = 1; m.started = Math.floor(now() / 1000); return true; }
+  if (m.seats.every(s => s && s.ready) && ['deploy', 'lobby'].includes(m.phase)) { m.phase = 'playing'; m.turn = m.players === 3 ? -1 : 0; m.turn_number = 1; m.started = Math.floor(now() / 1000); return true; }
   return false;
 }
 function areaCells(size, cell, kind, vertical) {
@@ -553,6 +566,136 @@ function fire(m, s, msg) {
   return null;
 }
 
+
+/* ---------------- 3-player quick battles (v0.20, m.players === 3) ----------------
+   Three quick maps (9×9, 3×3 sectors each), one per captain. Sector letters are per map so a shot reads unambiguously:
+   map 1 a–i, map 2 z–r, map 3 1–9, then the square inside the sector as in every other mode ("c5", "w2", "73").
+   Everyone fires at once: each round, every captain still afloat sends one volley (TRIO_SALVO shots, split freely across
+   both opponents); when the last human volley is in, the CPU captains aim and every shot lands together. A captain whose
+   whole fleet is sunk is out; the last fleet afloat wins (two sunk in the same round: the one still afloat wins; all of
+   them: a draw). Seats can be: the host, an invite holder (join link), a CPU, or a second captain on the host's device
+   ("local": same browser, its own seat key). Classic rules only: no specials, so every round is a clean salvo. */
+const TRIO_LABELS = ['abcdefghi', 'zyxwvutsr', '123456789'];
+const TRIO_SALVO = 5;                                         // 2-player quick is 3: more shots, shorter games
+const TRIO_AI = { easy: '🐧 Easy AI', normal: '🦭 Walrus AI', hard: '🐋 Whale AI' };
+const trio = m => m.players === 3;
+const alive = (m, i) => !!m.seats[i] && m.seats[i].out == null;
+const trioSalvo = (m, s) => {
+  let k = TRIO_SALVO;
+  for (let t = 0; t < 3; t++) if (t !== s && alive(m, t) && m.seats[t].ships.filter(sh => !isSunk(m.seats[t], sh)).length <= 2) { k++; break; }   // mop-up ping
+  return k;
+};
+function trioCreate(ws, msg) {
+  const size = 9, { w, h } = DIM(size), fw = new Set();
+  while (fw.size < FIREWALLS[size]) fw.add(crypto.randomInt(w * h));
+  const m = { v: SCHEMA, pace: PACE, players: 3, rules: 'classic', firewalls: [...fw], events: [], manifest: null, id: rid(16), mode: 'trio', size, fleet: fleetFor(size),
+    phase: 'lobby', revision: 1, turn: -1, turn_number: 0, volleys: {}, winner: null, reason: null, score_saved: false, created: Math.floor(now() / 1000),
+    started: null, finished: null, attacks: [], seats: [null, null, null] };
+  m.seats[0] = newSeat(ws.identity, ws.authed ? ws.name : clean(msg.name) || ws.name, m);
+  const cpus = (Array.isArray(msg.cpus) ? msg.cpus : []).slice(0, 2).map(l => TRIO_AI[l] ? l : 'normal');
+  cpus.forEach((lvl, i) => { const ai = newSeat('ai:' + lvl, TRIO_AI[lvl], m, lvl); ai.ships = randomFleet(size, m.fleet, m.firewalls); ai.ready = true; m.seats[1 + i] = ai; });
+  if (m.seats.every(Boolean)) m.phase = 'deploy';
+  matches.set(m.id, m);
+  const cred = issue(m.seats[0]); attach(ws, m, 0); persist(m);
+  send(ws, { type: 'MATCH_CREATED', state: view(m, 0), credential: cred });
+}
+// The host adds a second captain who plays on this same device (pass and play): a seat with its own key.
+function trioAddLocal(m, s, msg) {
+  if (s !== 0) return 'Only the host can add a captain to this device.';
+  if (m.phase !== 'lobby') return 'The crew is already complete.';
+  const free = m.seats.findIndex(x => !x); if (free < 0) return 'All three seats are taken.';
+  m.seats[free] = newSeat(m.seats[0].identity + ':local' + free, clean(msg.name) || `Captain ${free + 1}`, m);
+  m.seats[free].local = true; m.seats[free].connected = true;
+  if (m.seats.every(Boolean)) m.phase = 'deploy';
+  return { credential: issue(m.seats[free]), seat: free };
+}
+function trioAddCpu(m, s, msg) {
+  if (s !== 0) return 'Only the host can add a CPU captain.';
+  if (m.phase !== 'lobby') return 'The crew is already complete.';
+  const free = m.seats.findIndex(x => !x); if (free < 0) return 'All three seats are taken.';
+  const lvl = TRIO_AI[msg.level] ? msg.level : 'normal', ai = newSeat('ai:' + lvl, TRIO_AI[lvl], m, lvl);
+  ai.ships = randomFleet(m.size, m.fleet, m.firewalls); ai.ready = true; m.seats[free] = ai;
+  if (m.seats.every(Boolean)) m.phase = 'deploy';
+  return null;
+}
+// msg.shots: [[targetSeat, cell], ...]. Stored until every captain still afloat has fired, then resolved together.
+function trioFire(m, s, msg) {
+  if (m.phase !== 'playing') return 'The battle has not started.';
+  if (!alive(m, s)) return 'Your fleet is on the bottom - you can watch, not fire.';
+  if (m.volleys[s]) return 'Your volley is already in - waiting for the others.';
+  const raw = Array.isArray(msg.shots) ? msg.shots : [], n = DIM(m.size).w * DIM(m.size).h, seen = new Set(), shots = [];
+  for (const x of raw) {
+    const t = Number(x && x[0]), c = Number(x && x[1]);
+    if (!Number.isInteger(t) || t === s || !alive(m, t)) return 'Aim at a captain who is still afloat.';
+    if (!Number.isInteger(c) || c < 0 || c >= n) return 'Pick a square.';
+    if (m.seats[t].board[c] === 5) return 'That’s a firewall iceberg - packets bounce off.';
+    if (m.seats[t].board[c] !== 0) return 'Already probed - pick fresh water.';
+    if (seen.has(t * n + c)) continue; seen.add(t * n + c); shots.push([t, c]);
+  }
+  const open = [0, 1, 2].filter(t => t !== s && alive(m, t)).reduce((k, t) => k + m.seats[t].board.filter(v => v === 0).length, 0);
+  if (!shots.length) return 'Pick at least one square.';
+  if (shots.length > Math.min(trioSalvo(m, s), open)) return `You can fire ${trioSalvo(m, s)} shots this round.`;
+  m.volleys[s] = shots;
+  trioMaybeResolve(m);
+  return null;
+}
+function trioMaybeResolve(m) {
+  if (m.phase !== 'playing') return;
+  const waiting = [0, 1, 2].filter(i => alive(m, i) && !m.seats[i].ai && !m.volleys[i]);
+  if (waiting.length) return;
+  for (const i of [0, 1, 2]) if (alive(m, i) && m.seats[i].ai && !m.volleys[i]) m.volleys[i] = trioAiShots(m, i);
+  // every shot lands together: marks first, then who sank, then who is out
+  const round = m.turn_number, hits = [];
+  for (const i of shuffle([0, 1, 2])) for (const [t, c] of m.volleys[i] || []) {
+    const op = m.seats[t], ship = op.ships.find(sh => sh.cells.includes(c)), already = op.board[c] !== 0;
+    if (!already) op.board[c] = ship ? 2 : 1;
+    const a = { seat: i, target: t, cell: c, hit: !!ship, sunk: null, turn: round, together: already || undefined };
+    m.attacks.push(a); if (ship) hits.push([a, op, ship]);
+  }
+  for (const [a, op, ship] of hits) if (isSunk(op, ship) && !ship.cells.every(x => op.board[x] === 3)) { ship.cells.forEach(x => op.board[x] = 3); a.sunk = { id: ship.id }; }
+  const outNow = [0, 1, 2].filter(i => alive(m, i) && m.seats[i].ships.every(sh => isSunk(m.seats[i], sh)));
+  for (const i of outNow) { m.seats[i].out = round; pushEvent(m, { seat: i, kind: 'out' }); }
+  m.volleys = {}; m.turn_number++;
+  const left = [0, 1, 2].filter(i => alive(m, i));
+  if (left.length === 1) finish(m, left[0], 'fleet');
+  else if (!left.length) finish(m, null, 'draw');
+  else if (left.every(i => m.seats[i].ai)) trioMaybeResolve(m);          // only CPUs left: they play it out
+}
+function trioAiShots(m, s) {
+  const k = trioSalvo(m, s), level = m.seats[s].ai, N = DIM(m.size).w, T = N * DIM(m.size).h, cand = [];
+  for (const t of [0, 1, 2]) {
+    if (t === s || !alive(m, t)) continue;
+    const b = m.seats[t].board;
+    for (let c = 0; c < T; c++) {
+      if (b[c] !== 0) continue;
+      let sc = Math.random() * .5;
+      if (level !== 'easy') for (const d of [-1, 1, -N, N]) { const x = c + d; if (x < 0 || x >= T || ((d === 1 || d === -1) && Math.floor(x / N) !== Math.floor(c / N))) continue; if (b[x] === 2) sc += 10; }
+      if (level === 'hard' && (c % N + Math.floor(c / N)) % 2 === 0) sc += 1;
+      cand.push([sc, t, c]);
+    }
+  }
+  return cand.sort((a, b) => b[0] - a[0]).slice(0, k).map(([, t, c]) => [t, c]);
+}
+function trioOut(m, s, reason) {                               // leaving / forfeiting: that captain is out, the others play on
+  if (m.phase !== 'playing' || !alive(m, s)) return;
+  m.seats[s].out = m.turn_number; m.seats[s].quit = reason; delete m.volleys[s]; pushEvent(m, { seat: s, kind: 'out', reason });
+  const left = [0, 1, 2].filter(i => alive(m, i));
+  if (left.length === 1) finish(m, left[0], 'forfeit'); else trioMaybeResolve(m);
+}
+function trioView(m, s) {
+  const t = now(), gone = x => !x ? 0 : x.ai || x.connected ? 0 : Math.floor((t - (x.lastSeen || t)) / 1000), me = m.seats[s];
+  const pub = (x, i) => !x ? { seat: i, empty: true, label: TRIO_LABELS[i] } : { seat: i, label: TRIO_LABELS[i], name: x.name, ai: !!x.ai, local: !!x.local, ready: x.ready,
+    out: x.out ?? null, quit: x.quit || null, connected: !!(x.ai || x.connected), disconnect_seconds: gone(x), fired: !!m.volleys[i],
+    shots: x.board, sunk: x.ships.filter(sh => isSunk(x, sh)), afloat: x.ships.filter(sh => !isSunk(x, sh)).length };
+  return {
+    id: m.id, players: 3, revision: m.revision, mode: 'trio', size: m.size, w: DIM(m.size).w, h: DIM(m.size).h, sectors: true, fleet: m.fleet, labels: TRIO_LABELS,
+    salvo: m.phase === 'playing' && alive(m, s) ? trioSalvo(m, s) : TRIO_SALVO, phase: m.phase, seat: s, turn: -1, turn_number: m.turn_number,
+    created: m.created, started: m.started, finished: m.finished, rules: 'classic', firewalls: m.firewalls || [], events: (m.events || []).slice(-20),
+    me: { ships: me.ships, shots: me.board, ready: me.ready, remaining: remaining(me), out: me.out ?? null, fired: m.volleys[s] || null, local_seats: m.seats.map((x, i) => x && x.local && s === 0 ? i : -1).filter(i => i >= 0) },
+    captains: m.seats.map(pub), attacks: m.attacks, winner: m.winner, reason: m.reason, score_saved: m.score_saved, forfeit_after: FORFEIT_AFTER,
+  };
+}
+
 /* ---------------- AI captains ---------------- */
 function aiTargets(m, s, k) {
   const op = m.seats[1 - s], { w: N, h: HT } = DIM(m.size), T = N * HT, board = op.board, open = [];
@@ -637,13 +780,27 @@ function handle(ws, raw) {
     case 'READY':
       if (me.ships.length !== m.fleet.length) { err = 'Deploy every whale first.'; break; }
       me.ready = true; type = maybeStart(m) ? 'TURN_STARTED' : 'FLEET_READY'; break;
-    case 'ATTACK': case 'FIRE': case 'POWER': err = fire(m, s, msg); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED'; break;
+    case 'ATTACK': case 'FIRE': case 'POWER':
+      if (trio(m)) { err = msg.type === 'POWER' ? 'No specials in 3-captain battles.' : trioFire(m, s, msg); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED'; break; }
+      err = fire(m, s, msg); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'ATTACK_RESOLVED'; break;
+    case 'ADD_CPU': if (!trio(m)) { err = 'Unknown command.'; break; } err = trioAddCpu(m, s, msg); break;
+    case 'ADD_LOCAL': {
+      if (!trio(m)) { err = 'Unknown command.'; break; }
+      const r = trioAddLocal(m, s, msg); if (typeof r === 'string') { err = r; break; }
+      m.revision++; send(ws, { type: 'LOCAL_SEAT', seat: r.seat, credential: r.credential, state: view(m, s) }); persist(m); broadcast(m, 'STATE'); return;
+    }
     case 'CLAIM_FORFEIT': {
+      if (trio(m)) {                                            // a captain gone silent for FORFEIT_AFTER is taken out of the battle
+        const t = Number(msg.seat), x = m.seats[t];
+        if (m.phase !== 'playing' || !x || x.ai || x.local || x.connected || t === s || !alive(m, t) || (now() - x.lastSeen) / 1000 < FORFEIT_AFTER) { err = 'That captain is still around.'; break; }
+        trioOut(m, t, 'timeout'); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'STATE'; break;
+      }
       const op = m.seats[1 - s];
       if (m.phase !== 'playing' || !op || op.ai || op.connected || (now() - op.lastSeen) / 1000 < FORFEIT_AFTER) { err = 'Your opponent is still around.'; break; }
       finish(m, s, 'forfeit'); type = 'MATCH_FINISHED'; break;
     }
     case 'LEAVE_MATCH':
+      if (trio(m) && m.phase === 'playing') { trioOut(m, s, 'left'); type = m.phase === 'finished' ? 'MATCH_FINISHED' : 'STATE'; break; }
       if (m.phase === 'playing') { finish(m, 1 - s, 'forfeit'); type = 'MATCH_FINISHED'; break; }
       if (m.phase !== 'finished') { m.phase = 'finished'; m.finished = Math.floor(now() / 1000); m.reason = 'closed'; m.revision++; persist(m); for (const o of sockets.get(m.id) || []) send(o, { type: 'MATCH_CLOSED' }); return; }
       return;

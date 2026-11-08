@@ -319,3 +319,65 @@ test('restore (pace 2): the damaged creature comes back whole somewhere in the 5
   o.close();
   } finally { b.close(); await stop(srv2); rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- 3-captain quick battles ----
+const settle = (ms = 250) => new Promise(r => setTimeout(r, ms));
+const freshOn = (st, seat) => st.captains[seat].shots.map((v, i) => v === 0 ? i : -1).filter(i => i >= 0);
+test('3 captains: per-map sector letters, five shots split across both rivals, everyone fires at once, last fleet afloat wins', async () => {
+  const c = client(); await c.open;
+  const made = await c.send({ type: 'CREATE_MATCH', players: 3, cpus: ['easy', 'easy'], name: 'host' });
+  let st = made.state;
+  assert.equal(st.players, 3); assert.equal(st.size, 9); assert.deepEqual(st.labels, ['abcdefghi', 'zyxwvutsr', '123456789']);
+  assert.equal(st.captains.length, 3); assert.ok(st.captains[1].ai && st.captains[2].ai); assert.equal(st.phase, 'deploy');
+  await c.act('RANDOMIZE_FLEET'); const ready = await c.act('READY'); st = ready.state;
+  assert.equal(st.phase, 'playing'); assert.equal(st.salvo, 5);
+  // aiming at yourself, a sixth shot, or a probed square is refused
+  assert.match((await c.act('FIRE', { shots: [[0, freshOn(st, 0)[0]]] })).error, /afloat/);
+  const six = [...freshOn(st, 1).slice(0, 3).map(x => [1, x]), ...freshOn(st, 2).slice(0, 3).map(x => [2, x])];
+  assert.match((await c.act('FIRE', { shots: six })).error, /5 shots/);
+  const vol = [...freshOn(st, 1).slice(0, 3).map(x => [1, x]), ...freshOn(st, 2).slice(0, 2).map(x => [2, x])];
+  const r1 = await c.act('FIRE', { shots: vol }); assert.ok(!r1.error, r1.error); st = r1.state;
+  assert.equal(st.turn_number, 2, 'with only CPUs to wait for, the round resolves at once');
+  const round1 = st.attacks.filter(a => a.turn === 1);
+  assert.equal(round1.filter(a => a.seat === 0).length, 5); assert.ok(round1.some(a => a.seat === 1) && round1.some(a => a.seat === 2), 'the CPUs fired in the same round');
+  for (const a of round1) assert.notEqual(a.seat, a.target);
+  for (const [t, x] of vol) assert.notEqual(st.captains[t].shots[x], 0, 'my shots marked');
+  // play it out: the battle ends with exactly one winner (or a draw)
+  for (let i = 0; i < 60 && st.phase === 'playing'; i++) {
+    if (st.me.out != null) break;
+    const opts = [1, 2].filter(t => st.captains[t].out == null).flatMap(t => freshOn(st, t).map(x => [t, x]));
+    const r = await c.act('FIRE', { shots: opts.slice(0, st.salvo) }); assert.ok(!r.error, r.error); st = r.state;
+  }
+  await settle(); st = c.st;
+  if (st.me.out != null && st.phase === 'playing') { await settle(1200); st = c.st; }       // the CPUs finish it between themselves
+  assert.equal(st.phase, 'finished'); assert.ok(st.winner === null || [0, 1, 2].includes(st.winner));
+  if (st.winner != null) assert.equal(st.captains[st.winner].out, null, 'the winner is afloat');
+  c.close();
+});
+
+test('3 captains: an invite holder and a second captain on the host\'s device; the round waits for every human volley', async () => {
+  const host = client(); await host.open;
+  const made = await host.send({ type: 'CREATE_MATCH', players: 3, name: 'host' });
+  assert.equal(made.state.phase, 'lobby');
+  const loc = await host.act('ADD_LOCAL', { name: 'Sofa' }); assert.equal(loc.type, 'LOCAL_SEAT'); assert.equal(loc.seat, 1);
+  const guest = client(); await guest.open;
+  const joined = await guest.send({ type: 'JOIN_MATCH', session: made.state.id, name: 'Kelp' }); assert.equal(joined.type, 'PLAYER_JOINED'); assert.equal(joined.state.seat, 2);
+  const late = client(); await late.open;
+  assert.match((await late.send({ type: 'JOIN_MATCH', session: made.state.id, name: 'late' })).error || '', /full/, 'a fourth captain is turned away'); late.close();
+  const sofa = client(); await sofa.open;
+  const back = await sofa.send({ type: 'RESUME_MATCH', session: made.state.id, credential: loc.credential }); assert.equal(back.state.seat, 1, 'the local seat key opens seat 2 on this device');
+  await settle();
+  for (const x of [host, sofa, guest]) { await x.act('RANDOMIZE_FLEET'); await x.act('READY'); }
+  await settle(); let st = host.st; assert.equal(st.phase, 'playing');
+  await host.act('FIRE', { shots: freshOn(st, 1).slice(0, 5).map(x => [1, x]) });
+  await settle(); assert.equal(host.st.turn_number, 1, 'still waiting for two volleys'); assert.equal(host.st.captains[0].fired, true);
+  await sofa.act('FIRE', { shots: freshOn(sofa.st, 2).slice(0, 5).map(x => [2, x]) });
+  await settle(); assert.equal(guest.st.turn_number, 1);
+  await guest.act('FIRE', { shots: freshOn(guest.st, 0).slice(0, 5).map(x => [0, x]) });
+  await settle(); assert.equal(host.st.turn_number, 2, 'resolved when the last human fired');
+  assert.equal(host.st.attacks.filter(a => a.turn === 1).length, 15);
+  // a captain who leaves is out; the other two play on
+  await guest.act('LEAVE_MATCH'); await settle();
+  assert.equal(host.st.phase, 'playing'); assert.notEqual(host.st.captains[2].out, null);
+  for (const x of [host, sofa, guest]) x.close();
+});
