@@ -368,7 +368,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   function fitView(wNeed, hNeed) { const w = canvas.clientWidth, h = canvas.clientHeight, aw = Math.max(120, w - insets.left - insets.right), ah = Math.max(120, h - insets.top - insets.bottom); return Math.max(hNeed * h / ah, wNeed * h / aw) * 1.02; }
   function resize() {
     const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return; renderer.setSize(w, h, false);
-    if (lastSet && boards.size > 2 && (h > w) !== portrait) { const f = focusKey, a = active; api.setBoard(N, HT, ...lastSet); api.focus(f, 0, a); api.onRelayout?.(); return; }
+    if (lastSet && boards.size >= 2 && (h > w) !== portrait) { const f = focusKey, a = active; api.setBoard(N, HT, ...lastSet); api.focus(f, 0, a); api.onRelayout?.(); return; }
     const diag = (N + HT) / Math.SQRT2; viewH = fitView(diag, diag * SIN_EL + 1.4);
     if (groups.has(focusKey)) gs = viewH / fitView(groups.get(focusKey).w, groups.get(focusKey).h);
     const a = w / h; camera.top = viewH / 2; camera.bottom = -viewH / 2; camera.left = -viewH * a / 2; camera.right = viewH * a / 2; camera.updateProjectionMatrix();
@@ -488,6 +488,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
         let o;
         if (keys.length > 2 && i > 0) { const sgn = i === 1 ? -1 : 1; o = portrait ? RIGHT.clone().multiplyScalar(step * .5 + sgn * ext * .35).addScaledVector(PERP, sgn * (ext + 1.6))
                                                                                 : RIGHT.clone().multiplyScalar((i - mid) * step).addScaledVector(PERP, -sgn * ext * .3); }
+        else if (keys.length === 2 && portrait) o = PERP.clone().multiplyScalar((i === 0 ? 1 : -1) * (ext + 1.6));   // 2 captains on a portrait phone: theirs above, yours below (a showdown frames both at once)
         else o = RIGHT.clone().multiplyScalar((i - mid) * step);
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(N, HT).rotateX(-Math.PI / 2), mat);
         mesh.position.set(o.x, .09, o.z); mesh.renderOrder = 2; scene.add(mesh); boards.set(key, {mesh, tex, mat, off: o});
@@ -495,13 +496,15 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       const r = k => { const o = off(k); return [o.x - N / 2, o.z - HT / 2, o.x + N / 2, o.z + HT / 2]; };
       [oceanMat.uniforms.uBoard, oceanMat.uniforms.uBoard2, oceanMat.uniforms.uBoard3].forEach((u, i) => u.value.set(...r(keys[Math.min(i, keys.length - 1)])));
       // groups framed together: their centre, and how much to pull back so all of them fit
-      groups.clear(); for (const [name, ks] of Object.entries(groupDefs || {})) { const o = ks.reduce((a, k) => a.add(off(k)), new THREE.Vector3()).multiplyScalar(1 / ks.length); const us = ks.map(k => off(k).dot(RIGHT)), vs = ks.map(k => off(k).dot(PERP)); groups.set(name, {keys: ks, off: o, w: 2 * ext + Math.max(...us) - Math.min(...us), h: 2 * ext * SIN_EL + 1.4 + (Math.max(...vs) - Math.min(...vs)) * SIN_EL}); }
+      groups.clear(); for (const [name, ks] of Object.entries(groupDefs || {})) { const o = ks.reduce((a, k) => a.add(off(k)), new THREE.Vector3()).multiplyScalar(1 / ks.length); const us = ks.map(k => off(k).dot(RIGHT)), vs = ks.map(k => off(k).dot(PERP)); groups.set(name, {keys: ks, off: o, w: 2 * ext + 1.5 + Math.max(...us) - Math.min(...us), h: 2 * ext * SIN_EL + 1.4 + (Math.max(...vs) - Math.min(...vs)) * SIN_EL}); }
       // scenery around the archipelago: a buoy in each channel, others well clear of the boards
       const at = (u, v) => RIGHT.clone().multiplyScalar(u).addScaledVector(PERP, v), first = (0 - mid) * step, last = (keys.length - 1 - mid) * step;
-      [[b1, at(first + step / 2, ext * .55)], [b2, at(last - step / 2, -ext * .7)], [berg, at(last + ext + 4, -2)], [far, at(first - ext - 5, 3)]].forEach(([o, p]) => o.position.set(p.x, o.position.y, p.z));
+      const stacked = keys.length === 2 && portrait;
+      (stacked ? [[b1, at(ext * .9, 0)], [b2, at(-ext * .9, .5)], [berg, at(ext + 3, -ext - 3)], [far, at(-ext - 4, ext + 3)]]
+               : [[b1, at(first + step / 2, ext * .55)], [b2, at(last - step / 2, -ext * .7)], [berg, at(last + ext + 4, -2)], [far, at(first - ext - 5, 3)]]).forEach(([o, p]) => o.position.set(p.x, o.position.y, p.z));
       focusKey = keys[0]; active = keys[0]; gs = 1;
       cruisers.forEach((c, i) => { c.board = keys[Math.min(i, keys.length - 1)]; c.m.visible = i < keys.length; });   // one ship circling each board
-      const sh = Math.max(18, keys.length > 2 ? step + ext : ext + 6); Object.assign(sun.shadow.camera, {left: -sh, right: sh, top: sh, bottom: -sh}); sun.shadow.camera.updateProjectionMatrix();
+      const sh = Math.max(18, keys.length > 2 || stacked ? step + ext : ext + 6); Object.assign(sun.shadow.camera, {left: -sh, right: sh, top: sh, bottom: -sh}); sun.shadow.camera.updateProjectionMatrix();
       for (const c of creatures.values()) scene.remove(c); creatures.clear();
       this.setZoomPan(last3.z, last3.px, last3.py, false);
     },

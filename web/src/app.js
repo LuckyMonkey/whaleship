@@ -274,7 +274,7 @@ function onState(msg) {
   if (msg.credential) { seatKeys[active] = msg.credential; saveSession(); if (trioOn()) { (deviceSeats[active] ||= {})[state.seat] = msg.credential; saveDeviceSeats(); } }
   if (trioOn() && pendingLocal && state.seat === 0 && msg.type === 'MATCH_CREATED') { pendingLocal = false; setTimeout(addLocalCaptain, 200); }
   if (restoring) {
-    held = null; view = deploying() ? 'home' : (myTurn() || state.phase === 'finished') ? 'target' : 'home';
+    held = null; view = deploying() ? 'home' : (myTurn() || sdOn() || state.phase === 'finished') ? 'target' : 'home';
     prompt(`docker compose -p ${toShort(state.id).slice(0, 8).toLowerCase()} up --attach`);
     log(`[+] ${msg.type === 'MATCH_CREATED' ? 'Running' : 'Attaching'} · ${state.mode} · ${SECT() ? `${NSEC()} sectors (${N}x${HT})` : N + 'x' + HT} · salvo ${state.salvo} · rev ${state.revision} · subnet 172.20.0.0/16`);
     autoZoom();
@@ -521,7 +521,7 @@ const rk = seat => seat === state?.seat ? 'home' : layout === 3 ? (seat === riva
 const seatOfKey = k => k === 'ra' ? rivals()[0] : k === 'rb' ? rivals()[1] : null;
 const actKey = () => view === 'home' ? 'home' : layout === 3 ? rk(aimSeat) : 'target';   // the board taps and effects land on
 let trioFocus = 'both';   // 3 captains, aiming: 'both' rivals' maps, or one rival's seat
-const camKey = () => view === 'home' ? 'home' : layout === 3 ? (trioFocus === 'both' || trioFocus === state?.seat || state?.captains?.[trioFocus]?.out != null || !state?.captains ? 'rivals' : rk(trioFocus)) : 'target';   // what the camera frames
+const camKey = () => layout === 2 && sdOn() ? 'duel' : view === 'home' ? 'home' : layout === 3 ? (trioFocus === 'both' || trioFocus === state?.seat || state?.captains?.[trioFocus]?.out != null || !state?.captains ? 'rivals' : rk(trioFocus)) : 'target';   // what the camera frames
 function setTrioFocus(f) {
   trioFocus = f; if (f !== 'both') setAim(f, true);
   if (view !== 'target') slideTo('target'); else if (R3) R3.focus(camKey(), settings.fast ? 320 : 560, actKey());
@@ -545,7 +545,7 @@ function setSize(n, players = 2) {
     const keys = layout === 3 ? ['home', 'ra', 'rb'] : ['home', 'target'];
     for (const v of keys) { const pl = planes[v] ||= {}; const cv = pl.cv ||= document.createElement('canvas'); cv.width = N * px; cv.height = HT * px; pl.ctx = cv.getContext('2d'); pl.sig = ''; }
     plane.w = N * px; plane.k = 1; plane.ctx = planes[keys[1]].ctx;
-    R3.setBoard(N, HT, Object.fromEntries(keys.map(k => [k, planes[k].cv])), layout === 3 ? {rivals: ['ra', 'rb']} : null); R3.focus(camKey(), 0, actKey()); layout3D(); drawPlane(); return;
+    R3.setBoard(N, HT, Object.fromEntries(keys.map(k => [k, planes[k].cv])), layout === 3 ? {rivals: ['ra', 'rb']} : {duel: ['home', 'target']}); R3.focus(camKey(), 0, actKey()); layout3D(); drawPlane(); return;
   }
   sizePlane();
 }
@@ -556,7 +556,16 @@ function sizePlane() {
   if (Math.abs(w - plane.w) < .5 && Math.abs(k - plane.k) / plane.k < .2) return;
   plane.w = w; plane.k = k; cv.width = Math.round(w * k); cv.height = Math.round(w * HT / N * k); plane.ctx = cv.getContext('2d'); drawPlane();
 }
-function shotsFor(v) { const src = v === 'home' ? state?.me.shots : state?.opponent?.shots; if (!src) return new Array(CELLS()).fill(0); return src.map((m, c) => hidden[v].has(c) ? 0 : m); }
+function shotsFor(v) { const src = v === 'home' ? state?.me.shots : state?.opponent?.shots; if (!src) return new Array(CELLS()).fill(0); const w = sdWreckCells(v); return src.map((m, c) => hidden[v].has(c) || w.has(c) ? 0 : m); }
+// showdown (0.21.3): both maps are wiped of the wrecks sunk before it - only the hunt for the last vessel shows.
+// A vessel sunk by a showdown tap (the final blow) stays on the map.
+function sdWrecks(v) {
+  if (!state?.showdown || trioOn()) return new Set();
+  const me = v === 'home', keep = new Set(state.attacks.filter(a => a.snap && a.sunk && (a.seat === state.seat) !== me).map(a => a.sunk.id)), shots = state.me.shots;
+  const sunk = me ? state.me.ships.filter(s => s.cells.every(c => (shots[c] || 0) >= 2)) : state.opponent?.sunk || [];
+  return new Set(sunk.map(s => s.id).filter(id => !keep.has(id)));
+}
+function sdWreckCells(v) { const ids = sdWrecks(v); if (!ids.size) return ids; const out = new Set(); for (const s of v === 'home' ? state.me.ships : state.opponent?.sunk || []) if (ids.has(s.id)) s.cells.forEach(c => out.add(c)); return out; }
 // 3D: the board canvas is uploaded to the GPU as a texture, so only redraw when something visible changed.
 let planeSig = '';
 function drawPlane() {
@@ -640,7 +649,7 @@ function drawPlane2() {
   if (!enemy && state) {
     for (const d of state.me.decoys || []) if (!shots[d]) { const x = (d % N + .5) * cs, y = (Math.floor(d / N) + .5) * cs; c.strokeStyle = '#c9a7ffaa'; c.lineWidth = cs * .06; c.setLineDash([cs * .1, cs * .1]); c.beginPath(); c.arc(x, y, cs * .32, 0, 6.283); c.stroke(); c.setLineDash([]); c.fillStyle = '#c9a7ff'; c.font = `900 ${cs * .42}px ${'ui-monospace,monospace'}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('☠', x, y); }
     const home = shots, ctr = sh => { const xs = sh.cells.map(q => q % N), ys = sh.cells.map(q => Math.floor(q / N)); return [(Math.min(...xs) + Math.max(...xs) + 1) / 2 * cs, (Math.min(...ys) + Math.max(...ys) + 1) / 2 * cs]; };
-    const up = sh => sh.cells.some(q => (home[q] || 0) < 2), ships = state.me.ships, hub = ships.find(sh => F(sh.id).kind === 0 && up(sh)) || ships.find(up);
+    const up = sh => sh.cells.some(q => (home[q] || 0) < 2), wr = sdWrecks('home'), ships = state.me.ships.filter(sh => !wr.has(sh.id)), hub = ships.find(sh => F(sh.id).kind === 0 && up(sh)) || ships.find(up);
     if (hub) { const [hx, hy] = ctr(hub);
       for (const sh of ships) { if (sh === hub) continue; const [x, y] = ctr(sh), alive = up(sh);
         c.strokeStyle = alive ? '#7fe3ff88' : '#ff754f66'; c.lineWidth = cs * (alive ? .07 : .05); c.setLineDash(alive ? [cs * .25, cs * .2] : [cs * .08, cs * .2]); c.lineDashOffset = alive ? -lifeGen * cs * .15 : 0;
@@ -685,8 +694,8 @@ function render3D() {
     const shots = shotsFor(v);
     if (state) {
       const list = v === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}));
-      const tag = rs != null ? 't' + rs : v;
-      for (const s of list) {
+      const tag = rs != null ? 't' + rs : v, wrecks = sdWrecks(v);
+      for (const s of list) { if (wrecks.has(s.id)) continue;
         const cells = [...s.cells].sort((a, b) => a - b), f = F(s.id), hits = cells.map((c, j) => (shots[c] || 0) >= 2 ? j : -1).filter(j => j >= 0);
         const mf = (s.own ? state.me.manifest : state.opponent?.manifest)?.[s.id] || [];
         items.push({key: `${tag}:${s.id}`, board: bk, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
@@ -702,7 +711,7 @@ function renderShips(shots) {
   if (R3) return render3D(shots);
   const b = $('#board');
   let ships = [];
-  if (state) ships = view === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}));
+  if (state) { const wr = sdWrecks(view); ships = (view === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}))).filter(s => !wr.has(s.id)); }
   const live = new Set();
   for (const s of ships) {
     const key = `${view}:${s.id}`; live.add(key);
@@ -759,6 +768,7 @@ function buildBoardEvents() {
       if (hit && layout === 3 && state && (hit.key === 'ra' || hit.key === 'rb')) {   // 3 captains: tap either rival's map
         const seat = seatOfKey(hit.key); if (view !== 'target') { if (seat !== aimSeat) setAim(seat, true); slideTo('target'); return; }
         if (seat !== aimSeat && state.captains[seat]?.out == null) setAim(seat); if (seat === aimSeat) tileTap(hit.cell); return; }
+      if (layout === 2 && sdOn()) { if (hit?.key === 'target') tileTap(hit.cell); return; }   // showdown: both maps in view, only theirs takes taps
       if (hit && rk(state?.seat) === 'home' && hit.key !== actKey() && (hit.key === 'home') !== (view === 'home') && !(deploying() && !state?.me.ready)) { slideTo(hit.key === 'home' ? 'home' : 'target'); return; } }
     if (R3 && state && view === 'home' && !armed && !(deploying() && !state.me.ready)) { const pc = R3.pickContainer(e.clientX, e.clientY); if (pc) { inspect(pc); return; } }
     const c = cellFromClient(e.clientX, e.clientY); if (c >= 0) tileTap(c); });
@@ -914,7 +924,7 @@ function fireVolley() {
 }
 
 /* ---------------- zoom + pan: starts with ~80% of the board on screen; drag to look around ---------------- */
-const baseZoom = () => layout === 3 && R3 ? 1 : SIZE === 9 ? (touchLayout() ? 1.3 : 1.05) : SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
+const baseZoom = () => (layout === 3 || sdOn()) && R3 ? 1 : SIZE === 9 ? (touchLayout() ? 1.3 : 1.05) : SIZE === 36 ? (R3 ? (touchLayout() ? 1.45 : 1.06) : 1.15) : SIZE >= 30 ? (coarse() ? 1.6 : 1.3) : SIZE >= 20 ? 1.25 : SIZE === 15 ? (R3 ? 1.12 : 1.3) : 1;   // zoomed in: the ocean feels vast, drag to look around
 let planeResize = 0;
 function applyZoom(glide = false) {
   const w = $('#zoom'); if (!w) return;
@@ -1464,12 +1474,14 @@ function renderWatch() {
 }
 
 /* ---------------- result: incident report ---------------- */
-let resultShownFor = null;
+let resultShownFor = null, resultAt = 0, resultDue = null;
 function renderResult() {
   const o = $('#result-overlay');
   if (state?.phase !== 'finished' || spect() || animating || queue.length) { o.hidden = true; return; }
   if (resultShownFor === state.id) return;
-  resultShownFor = state.id;
+  // a showdown ends mid-tap: let the last vessel go down on screen first
+  if (state.reason === 'showdown') { if (resultDue?.id !== state.id) { const ms = settings.fast ? 700 : 1400; resultDue = {id: state.id, at: Date.now() + ms}; setTimeout(render, ms + 20); } if (Date.now() < resultDue.at) return; }
+  resultShownFor = state.id; resultAt = Date.now();
   const won = state.winner === state.seat, mine = state.attacks.filter(a => a.seat === state.seat && !a.reveal), theirs = state.attacks.filter(a => a.seat !== state.seat && !a.reveal);
   const hits = mine.filter(a => a.hit).length;
   const pad = (k, v) => `${k.padEnd(24)}${String(v).padStart(6)}`;
@@ -1579,27 +1591,29 @@ function showdownIntro() {
   audio.sound('turn'); setTimeout(() => audio.sound('gull'), 500);
   autoZoom(); render();
   if (!settings.reduced) { const g = geo(); fxText({x: g.sea.width / 2, y: g.sea.height * .42, w: 60}, '⚡ SHOWDOWN', '#ffd34d', 46, 1900); }
-  if (view !== 'target') slideTo('target');
+  if (view !== 'target') slideTo('target'); else if (R3) R3.focus(camKey(), settings.fast ? 420 : 760, actKey());   // both maps at once: theirs to tap, yours to watch
 }
 function snapAt(c) {
   if (!state?.showdown?.live) { toast(`Showdown: waiting for ${oppName()} to come online.`); return; }
   const t = Date.now(); if (t - lastSnap < 170) return; lastSnap = t;
-  if ((state.opponent?.shots[c] || 0) !== 0) { audio.sound('error'); return; }
+  const v = shotsFor('target')[c]; if (v === 2 || v === 5) { audio.sound('error'); return; }   // a hit already sticks there / an iceberg
   raw({type: 'SNAP', session: state.id, cell: c}); audio.sound('packet');
   if (!settings.reduced) fxRing(cellPoint(c), 3, cellPoint(c).w * .5, '#ffd34d', 380);
 }
 function snapMissed(msg) {
   const mine = msg.seat === state.seat, board = mine ? 'target' : 'home';
-  if (R3) R3.splash(msg.cell, 'miss', board); else if (view === board && !settings.reduced) fxRing(cellPoint(msg.cell), 3, cellPoint(msg.cell).w * .6, '#dff6ff', 500);
-  if (mine) audio.sound('miss'); else if (Math.random() < .25) log(`${ts()} ${oppName()} pinged ${lc(msg.cell)} · missed`, 'miss');
+  if (R3) { R3.splash(msg.cell, 'miss', board); if (!mine && !settings.reduced) { const p = R3.cellScreen(msg.cell, 'home'); fxRing(p, 2, p.w * .7, '#ff9a7c', 520); } }
+  else if (view === board && !settings.reduced) fxRing(cellPoint(msg.cell), 3, cellPoint(msg.cell).w * .6, '#dff6ff', 500);
+  if (mine) audio.sound('miss'); else { audio.sound('packet', true); if (Math.random() < .25) log(`${ts()} ${oppName()} pinged ${lc(msg.cell)} · missed`, 'miss'); }
 }
 async function snapLanded(a) {
   const mine = a.seat === state.seat, board = mine ? 'target' : 'home', kind = a.sunk ? 'sunk' : 'hit';
   if (R3) R3.splash(a.cell, kind, board);
   audio.sound(a.sunk ? 'sunk' : 'hit', !mine);
   log(mine ? `${lc(a.cell)} (${ip(a.cell, true)}): HIT${a.sunk ? ' · their last host is down' : ' · it sticks'}` : `${ts()} ⚠ ${oppName()} hit ${lc(a.cell)}${a.sunk ? ' · your last host is down' : ''}`, mine ? 'hit' : 'error');
-  if (view === board && !settings.reduced) fxText(cellPoint(a.cell), mine ? (a.sunk ? 'SUNK!' : 'HIT · IT STICKS') : 'THEY HIT US', mine ? '#ffd34d' : '#ff8a5c', 20, 1100);
-  if (mine && !a.sunk && view === 'target') { setZoom(Math.max(zoom.z, 1.8), 0, 0, true); await sleep(400); ensureVisible([a.cell]); }   // the view sticks to the spot you hit
+  const duel = R3 && layout === 2;
+  if ((view === board || duel) && !settings.reduced) fxText(duel ? R3.cellScreen(a.cell, board) : cellPoint(a.cell), mine ? (a.sunk ? 'SUNK!' : 'HIT · IT STICKS') : 'THEY HIT US', mine ? '#ffd34d' : '#ff8a5c', 20, 1100);
+  if (mine && !a.sunk && view === 'target' && !duel) { setZoom(Math.max(zoom.z, 1.8), 0, 0, true); await sleep(400); ensureVisible([a.cell]); }   // the view sticks to the spot you hit
 }
 
 /* ---------------- attract mode: a CPU battle plays behind the home screen when nobody's touched it ----------------
@@ -1753,7 +1767,7 @@ function playersTab(n) { document.querySelectorAll('[data-players]').forEach(b =
 document.querySelectorAll('[data-players]').forEach(b => b.onclick = () => { playersTab(Number(b.dataset.players)); audio.sound('select'); });
 try { if (localStorage.getItem('whaleship:players-tab') === '3') playersTab(3); } catch {}
 $('#view-ra').onclick = () => setTrioFocus(rivals()[0]); $('#view-rb').onclick = () => setTrioFocus(rivals()[1]);
-$('#result-overlay').onclick = () => $('#result-overlay').hidden = true;
+$('#result-overlay').onclick = () => { if (Date.now() - resultAt < 2500) return; $('#result-overlay').hidden = true; };   // fast tapping (a showdown) never closes it the moment it opens
 $('#to-terminal').onclick = () => openTerminal(true); $('#to-game').onclick = () => openTerminal(false);
 $('#term-back').onclick = () => openTerminal(false);
 $('#term-watch').onclick = () => { const on = !document.body.classList.contains('term-watch'); document.body.classList.toggle('term-watch', on); $('#term-watch').setAttribute('aria-pressed', String(on)); watchSig = ''; renderWatch(); };

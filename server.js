@@ -574,8 +574,8 @@ function fire(m, s, msg) {
 
 
 /* ---------------- SHOWDOWN (pace 3, v0.21): the end of a 2-captain battle, in real time ----------------
-   When both captains are down to their last vessel, the map is wiped clean (misses, hits, scan marks and decoys; wrecks
-   and icebergs stay) and turns end: both captains tap the enemy's waters as fast as they can (SNAP, one shot a tap).
+   When both captains are down to their last vessel, the map is wiped clean (misses, hits, scan marks and decoys; icebergs
+   stay; wrecks stay in the record but the client hides them and a tap there splashes like water) and turns end: both captains tap the enemy's waters as fast as they can (SNAP, one shot a tap).
    A miss splashes and leaves no mark; a hit sticks. Sink their last vessel to win. It only runs while both captains are
    online (an AI always is), so nobody wins an async friend game while the other is away. CPU captains tap at their pace. */
 const SNAP_GAP = 160, SD_AI_MS = { easy: 2400, normal: 1700, hard: 1150 };   // a person can tap 3-5 times a second; the CPU is slower but never forgets
@@ -599,7 +599,8 @@ function snap(m, s, cell) {
   if (!Number.isInteger(cell) || cell < 0 || cell >= n) return { err: 'Pick a square.' };
   if (t - (me.lastSnap || 0) < SNAP_GAP) return { quiet: true };
   me.lastSnap = t;
-  if (op.board[cell] !== 0) return { quiet: true };                       // a hit already sticks there / wreck / iceberg
+  if (op.board[cell] === 3) return { miss: true };                        // a wreck: wiped from the maps (0.21.3), so it splashes like open water
+  if (op.board[cell] !== 0) return { quiet: true };                       // a hit already sticks there / iceberg
   const ship = op.ships.find(sh => sh.cells.includes(cell));
   if (!ship) return { miss: true };
   strike(m, s, [cell]); const a = m.attacks[m.attacks.length - 1]; a.snap = true;

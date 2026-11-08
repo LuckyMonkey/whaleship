@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.3 — 2026-11-08
+
+**Showdown you can watch.** Client-side, plus one server fix; no rule change, games in progress are untouched.
+
+- **Both maps at once in a showdown:** the camera frames their waters and yours together, so you see every tap the other
+  captain makes on your map (their misses ring, their hits flash THEY HIT US). Only their map takes taps.
+- **Phones stack the two maps** (theirs on top, yours below) instead of side by side, in every 2-player game.
+- **Wrecks are wiped too:** vessels sunk before the showdown disappear from both maps (creatures, fires, fleet links).
+  A tap where a hidden wreck lies now splashes like open water instead of silently doing nothing (which gave it away).
+- **Fix: the result screen didn't show after a showdown.** It opened while you were still tapping fast, so your next
+  tap closed it at once. It now waits a moment for the last vessel to go down and ignores taps for its first 2.5 s.
+
 ## 0.21.2 — 2026-11-08
 
 **Showdown actually happens now, and fixes.** Pinned per match (`pace` 4): games already running keep their rules.
