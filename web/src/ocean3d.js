@@ -28,11 +28,12 @@ class Life {
 
 /* ---------------- ocean shader: gentle waves, sun, horizon fog, world-space GOL foam ---------------- */
 const OCEAN_VERT = `
-uniform float uTime; uniform vec4 uBoard;
+uniform float uTime; uniform vec4 uBoard, uBoard2;
 varying vec3 vWorld; varying vec3 vN; varying float vH;
 #include <fog_pars_vertex>
 float wave(vec2 p){ return sin(p.x*.33+uTime*.8)*.09 + sin(p.y*.27-uTime*.65)*.08 + sin((p.x+p.y)*.71+uTime*1.25)*.035 + sin((p.x-p.y)*1.3-uTime*1.7)*.015; }
-float calm(vec2 p){ vec2 d = max(vec2(uBoard.x-p.x, p.x-uBoard.z), 0.); vec2 e = max(vec2(uBoard.y-p.y, p.y-uBoard.w), 0.); float o = length(vec2(max(d.x,d.y), max(e.x,e.y))); return mix(.3, 1., smoothstep(0., 4., o)); }
+float dist(vec2 p, vec4 b){ vec2 d = max(vec2(b.x-p.x, p.x-b.z), 0.); vec2 e = max(vec2(b.y-p.y, p.y-b.w), 0.); return length(vec2(max(d.x,d.y), max(e.x,e.y))); }
+float calm(vec2 p){ float o = min(dist(p, uBoard), dist(p, uBoard2)); return mix(.3, 1., smoothstep(0., 4., o)); }
 void main(){
   vec4 w = modelMatrix * vec4(position, 1.);
   float k = calm(w.xz), h = wave(w.xz) * k, e = .25;
@@ -42,13 +43,14 @@ void main(){
   #include <fog_vertex>
 }`;
 const OCEAN_FRAG = `
-uniform float uTime, uMix, uFoamSize, uFoamStrength, uTexel; uniform sampler2D uPrev, uNext; uniform vec4 uBoard; uniform vec3 uSun, uView, uDeep, uShallow;
+uniform float uTime, uMix, uFoamSize, uFoamStrength, uTexel; uniform sampler2D uPrev, uNext; uniform vec4 uBoard, uBoard2; uniform vec3 uSun, uView, uDeep, uShallow;
 varying vec3 vWorld; varying vec3 vN; varying float vH;
 #include <fog_pars_fragment>
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
   return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
-float outside(vec2 p){ vec2 d = max(vec2(uBoard.x-p.x, p.x-uBoard.z), 0.); vec2 e = max(vec2(uBoard.y-p.y, p.y-uBoard.w), 0.); return length(vec2(max(d.x,d.y), max(e.x,e.y))); }
+float dist(vec2 p, vec4 b){ vec2 d = max(vec2(b.x-p.x, p.x-b.z), 0.); vec2 e = max(vec2(b.y-p.y, p.y-b.w), 0.); return length(vec2(max(d.x,d.y), max(e.x,e.y))); }
+float outside(vec2 p){ return min(dist(p, uBoard), dist(p, uBoard2)); }
 void main(){
   vec3 n = normalize(vN), L = normalize(uSun), V = normalize(uView);
   vec3 col = mix(uDeep, uShallow, smoothstep(-.12, .16, vH));
@@ -332,25 +334,32 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   let N = 15, HT = 15, viewH = 16, glide = null, framePx = {x: 0, y: 0}, insets = {top: 0, right: 0, bottom: 0, left: 0}, last3 = {z: 1, px: 0, py: 0};
   // panOff: a sideways camera offset for swapping oceans in-world (see swap()) - the canvas itself never moves or fades
   let pan = null, panOff = 0; const look = new THREE.Vector3();
-  const placeCamera = () => { look.copy(target).addScaledVector(RIGHT, panOff); camera.position.copy(look).addScaledVector(DIR, DIST); camera.lookAt(look); camera.updateMatrixWorld(); };
+  const placeCamera = () => { look.copy(target).addScaledVector(RIGHT, panOff); camera.position.copy(look).addScaledVector(DIR, DIST); camera.lookAt(look); camera.updateMatrixWorld();
+    if (sunRig) { sunRig.target.position.set(look.x, 0, look.z); sunRig.position.set(look.x + 18, 30, look.z + 6); sunRig.target.updateMatrixWorld(); if (catcher) catcher.position.set(look.x, .02, look.z); } };
+  let sunRig = null, catcher = null;
   scene.add(new THREE.HemisphereLight('#d8f2ff', '#0b4a7a', 1.15));
   const sun = new THREE.DirectionalLight('#fff3df', 2.4); sun.position.set(18, 30, 6); sun.castShadow = Q.shadows;
-  Object.assign(sun.shadow.camera, {left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 80}); sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024); sun.shadow.bias = -.0008; scene.add(sun, sun.target);
+  Object.assign(sun.shadow.camera, {left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 80}); sun.shadow.mapSize.set(quality === 'high' ? 2048 : 1024, quality === 'high' ? 2048 : 1024); sun.shadow.bias = -.0008; scene.add(sun, sun.target); sunRig = sun;
   // ocean: one displaced plane; Conway foam from two generation textures on the SAME plane as the board
   const life = new Life(Q.foam), mk = () => { const t = new THREE.DataTexture(new Uint8Array(Q.foam * Q.foam), Q.foam, Q.foam, THREE.RedFormat); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true; return t; };
   const prev = mk(), next = mk(); next.image.data.set(life.a); prev.image.data.set(life.a); prev.needsUpdate = next.needsUpdate = true;
   const oceanMat = new THREE.ShaderMaterial({vertexShader: OCEAN_VERT, fragmentShader: OCEAN_FRAG, fog: true,
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {uTime: {value: 0}, uMix: {value: 0}, uFoamSize: {value: Q.foam * .3}, uFoamStrength: {value: .6}, uTexel: {value: 1 / Q.foam}, uPrev: {value: null}, uNext: {value: null},
-      uBoard: {value: new THREE.Vector4(-7.5, -7.5, 7.5, 7.5)}, uSun: {value: sun.position.clone().normalize()}, uView: {value: DIR.clone()}, uDeep: {value: new THREE.Color('#0b4f86')}, uShallow: {value: new THREE.Color('#1f8fcf')}}])});
+      uBoard: {value: new THREE.Vector4(-7.5, -7.5, 7.5, 7.5)}, uBoard2: {value: new THREE.Vector4(-7.5, -7.5, 7.5, 7.5)}, uSun: {value: sun.position.clone().normalize()}, uView: {value: DIR.clone()}, uDeep: {value: new THREE.Color('#0b4f86')}, uShallow: {value: new THREE.Color('#1f8fcf')}}])});
   oceanMat.uniforms.uPrev.value = prev; oceanMat.uniforms.uNext.value = next;
   const oceanGeo = new THREE.PlaneGeometry(240, 240, Q.oceanSeg, Q.oceanSeg); oceanGeo.rotateX(-Math.PI / 2); scene.add(new THREE.Mesh(oceanGeo, oceanMat));
-  const shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(44, 44).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({opacity: .22})); shadowCatcher.position.y = .02; shadowCatcher.receiveShadow = true; scene.add(shadowCatcher);
+  const shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(44, 44).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({opacity: .22})); shadowCatcher.position.y = .02; shadowCatcher.receiveShadow = true; scene.add(shadowCatcher); catcher = shadowCatcher;
   // tactical overlay: the game paints its board canvas (marks, labels, targets) onto this plane
-  const boardMat = new THREE.MeshBasicMaterial({transparent: true, depthWrite: false, fog: false}); let board = null, boardTex = null;
+  // v0.21 one ocean: both maps float on the same sea, side by side along screen-right (target to the right, like the old
+  // swipe), with a channel of open water and Conway foam between them. The camera swings to whichever is active.
+  const boards = new Map(); let active = 'target';
+  const PERP = new THREE.Vector3(RIGHT.z, 0, -RIGHT.x).multiplyScalar(-1);   // the other ground diagonal (towards the viewer)
+  const off = key => boards.get(key)?.off || ZERO, ZERO = new THREE.Vector3();
   const hover = new THREE.Mesh(new THREE.PlaneGeometry(.96, .96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({color: '#ffd34d', transparent: true, opacity: .4, depthWrite: false})); hover.position.y = .1; hover.visible = false; hover.renderOrder = 3; scene.add(hover);
   // decorative world outside the board (never affects game state)
   const deco = [], add = (o, x, z) => { o.position.x = x; o.position.z = z; scene.add(o); deco.push(o); return o; };
-  const cellCenter = (q, r) => new THREE.Vector3(q - N / 2 + .5, 0, r - HT / 2 + .5);
+  const cellCenter = (q, r, key = active) => new THREE.Vector3(q - N / 2 + .5, 0, r - HT / 2 + .5).add(off(key));
+  const cellAt = (cell, key = active) => cellCenter(cell % N, Math.floor(cell / N), key);
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3(), v3 = new THREE.Vector3();
   const setRay = (cx, cy) => { const r = canvas.getBoundingClientRect(); ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera); };
   // Frame the board inside the free area (screen minus HUD insets): fit both its diamond width and height, then centre it there.
@@ -414,8 +423,9 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   // cruising scenery ships on loops around the battlefield
   const cruisers = [];
   // creatures (only what the player may see: own fleet, revealed enemy wrecks, public firewalls)
-  const creatures = new Map();
+  const creatures = new Map(), fireBy = new Map();
   const GEN_MS = 650, vis = new Float32Array(Q.foam * Q.foam); for (let i = 0; i < vis.length; i++) vis[i] = life.a[i] / 255;
+  let spread = 0;   // half the distance between the two boards' centres
   let genT = 0, last = performance.now(), raf = 0, frames = 0, fpsT = 0, fps = 0, time = 0, nextSpout = 4;
   let lastDraw = 0, frameNo = 0;
   function tick(now) {
@@ -428,7 +438,9 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       const nd = next.image.data, a = life.a; for (let i = 0; i < vis.length; i++) { vis[i] += ((a[i] ? 1 : 0) - vis[i]) * .42; nd[i] = vis[i] * 255; }
       prev.needsUpdate = next.needsUpdate = true; }
     oceanMat.uniforms.uTime.value = time; oceanMat.uniforms.uMix.value = genT / GEN_MS;
-    if (glide) { glide.t = Math.min(1, glide.t + dt / glide.dur); const e = 1 - (1 - glide.t) ** 3; target.lerpVectors(glide.from, glide.to, e); camera.zoom = glide.z0 + (glide.z1 - glide.z0) * e; camera.updateProjectionMatrix(); placeCamera(); if (glide.t >= 1) glide = null; }
+    if (glide) { glide.t = Math.min(1, glide.t + dt / glide.dur); const u = glide.t, e = glide.swing ? (u < .5 ? 4 * u ** 3 : 1 - (-2 * u + 2) ** 3 / 2) : 1 - (1 - u) ** 3;
+      target.lerpVectors(glide.from, glide.to, e); camera.zoom = (glide.z0 + (glide.z1 - glide.z0) * e) * (1 - (glide.dip || 0) * Math.sin(Math.PI * u)); camera.updateProjectionMatrix(); placeCamera();
+      if (glide.t >= 1) { const d = glide.done; glide = null; d?.(); } }
     if (pan) {   // out: ease-in to one side; swap while the board is off-screen; in: ease-out from the other side
       pan.t += dt / pan.half;
       if (pan.phase === 0) { const u = Math.min(1, pan.t); panOff = pan.dir * pan.dist * u * u; if (u >= 1) { pan.phase = 1; pan.t = 0; pan.runMid(); panOff = -pan.dir * pan.dist; } }
@@ -436,7 +448,7 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       placeCamera();
     }
     fxTick(dt); packetTick(dt); stuntTick(dt);
-    for (const c of cruisers) { c.a += dt * c.speed; const R = Math.max(N, HT) * .5 + c.r, x = Math.cos(c.a) * R * 1.15, z = Math.sin(c.a) * R; c.m.position.set(x, Math.sin(time * 1.1 + c.a) * .04, z); c.m.rotation.y = -c.a - (c.speed > 0 ? Math.PI / 2 : -Math.PI / 2); c.m.rotation.z = Math.sin(time * .9 + c.a) * .03; c.m.userData.update?.(time); }
+    for (const c of cruisers) { c.a += dt * c.speed; const R = spread + Math.max(N, HT) * .5 + c.r, x = Math.cos(c.a) * R * 1.15, z = Math.sin(c.a) * R; c.m.position.set(x, Math.sin(time * 1.1 + c.a) * .04, z); c.m.rotation.y = -c.a - (c.speed > 0 ? Math.PI / 2 : -Math.PI / 2); c.m.rotation.z = Math.sin(time * .9 + c.a) * .03; c.m.userData.update?.(time); }
     for (const o of deco) o.userData.update?.(time, dt);
     for (const c of creatures.values()) if (c.visible) c.userData.update(time, dt);
     if (time > nextSpout) { nextSpout = time + 5 + Math.random() * 6; const vis = [...creatures.values()].filter(c => c.visible && c.userData.kind % 5 <= 1); const w = vis[Math.floor(Math.random() * vis.length)]; if (w) { w.userData.spout(); api.onSpout?.(); } }
@@ -455,29 +467,51 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
   const ib = buildIcebreaker(); scene.add(ib); cruisers.push({m: ib, a: 2.6, speed: -.06, r: 4.2});
   api = {
     THREE, scene, camera, get fps() { return fps; }, get info() { return renderer.info.render; },
-    setBoard(n, ht, canvasEl) {
+    // canvases: {home, target} - each painted by the game; both boards are always on the water
+    setBoard(n, ht, canvases) {
       N = n; HT = ht; resize();
-      if (board) { scene.remove(board); board.geometry.dispose(); }
-      boardTex?.dispose(); boardTex = new THREE.CanvasTexture(canvasEl); boardTex.colorSpace = THREE.SRGBColorSpace; boardTex.anisotropy = 8; boardMat.map = boardTex; boardMat.needsUpdate = true;
-      board = new THREE.Mesh(new THREE.PlaneGeometry(N, HT).rotateX(-Math.PI / 2), boardMat); board.position.y = .09; board.renderOrder = 2; scene.add(board);
-      oceanMat.uniforms.uBoard.value.set(-N / 2, -HT / 2, N / 2, HT / 2);
+      for (const b of boards.values()) { scene.remove(b.mesh); b.mesh.geometry.dispose(); b.tex.dispose(); b.mat.dispose(); } boards.clear();
+      const ext = (N + HT) / 2 / Math.SQRT2; spread = ext + 2.6;            // each board's half-width along screen-right, plus half the channel
+      for (const [key, cv] of Object.entries(canvases)) {
+        const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+        const mat = new THREE.MeshBasicMaterial({map: tex, transparent: true, depthWrite: false, fog: false});
+        const o = RIGHT.clone().multiplyScalar(key === 'home' ? -spread : spread), mesh = new THREE.Mesh(new THREE.PlaneGeometry(N, HT).rotateX(-Math.PI / 2), mat);
+        mesh.position.set(o.x, .09, o.z); mesh.renderOrder = 2; scene.add(mesh); boards.set(key, {mesh, tex, mat, off: o});
+      }
+      const r = k => { const o = off(k); return [o.x - N / 2, o.z - HT / 2, o.x + N / 2, o.z + HT / 2]; };
+      oceanMat.uniforms.uBoard.value.set(...r('home')); oceanMat.uniforms.uBoard2.value.set(...r('target'));
+      // scenery around the archipelago: a buoy in the channel, others well clear of both boards
+      const at = (u, v) => RIGHT.clone().multiplyScalar(u).addScaledVector(PERP, v);
+      [[b1, at(0, ext * .55)], [b2, at(0, -ext * .7)], [berg, at(spread + ext + 4, -2)], [far, at(-(spread + ext + 5), 3)]].forEach(([o, p]) => o.position.set(p.x, o.position.y, p.z));
       for (const c of creatures.values()) scene.remove(c); creatures.clear();
+      this.setZoomPan(last3.z, last3.px, last3.py, false);
     },
-    boardDirty() { if (boardTex) boardTex.needsUpdate = true; },
+    boardDirty(key) { for (const [k, b] of boards) if (!key || k === key) b.tex.needsUpdate = true; },
+    get active() { return active; },
+    // swing the camera to a board: ease in-out with a slight zoom-out midway, resolves when it lands
+    focus(key, ms = 700) {
+      if (!boards.has(key)) return Promise.resolve(); active = key; const was = target.clone();
+      this.setZoomPan(last3.z, last3.px, last3.py, false); const to = target.clone(); target.copy(was); placeCamera();
+      if (ms <= 0 || was.distanceTo(to) < .01) { target.copy(to); placeCamera(); return Promise.resolve(); }
+      return new Promise(done => { glide = {t: 0, dur: ms / 1000, from: was, to, z0: camera.zoom, z1: camera.zoom, swing: true, dip: .14, done}; });
+    },
+    // which board (and cell) is under the pointer - the inactive one too, so a tap on it can bring it into focus
+    pickAny(cx, cy) { setRay(cx, cy); if (!ray.ray.intersectPlane(ground, hit)) return null;
+      for (const [key, b] of boards) { const q = Math.floor(hit.x - b.off.x + N / 2), r = Math.floor(hit.z - b.off.z + HT / 2); if (q >= 0 && r >= 0 && q < N && r < HT) return {key, cell: r * N + q}; } return null; },
     // pixel offset (px, py) and zoom z, same semantics as the 2D renderer's pan/zoom state
     setInsets(v) { insets = {...insets, ...v}; resize(); },
     setZoomPan(z, px, py, smooth) {
       last3 = {z, px, py};
       // zoom pivots on the free area's centre, so the board stays framed beside the console at any zoom
-      const k = viewH / Math.max(1, canvas.clientHeight) / z, to = base.clone().addScaledVector(RIGHT, -(px + framePx.x) * k).addScaledVector(FWD, (py + framePx.y) * k / SIN_EL);
+      const k = viewH / Math.max(1, canvas.clientHeight) / z, to = base.clone().add(off(active)).addScaledVector(RIGHT, -(px + framePx.x) * k).addScaledVector(FWD, (py + framePx.y) * k / SIN_EL);
       if (smooth) { glide = {t: 0, dur: .35, from: target.clone(), to, z0: camera.zoom, z1: z}; return; }
       glide = null; target.copy(to); camera.zoom = z; camera.updateProjectionMatrix(); placeCamera();
     },
-    cellScreen(cell) { const c = cellCenter(cell % N, Math.floor(cell / N)); c.y = .1; const a = c.clone().project(camera), b = c.clone().add(new THREE.Vector3(1, 0, 0)).project(camera), w = canvas.clientWidth, h = canvas.clientHeight;
+    cellScreen(cell, key = active) { const c = cellAt(cell, key); c.y = .1; const a = c.clone().project(camera), b = c.clone().add(new THREE.Vector3(1, 0, 0)).project(camera), w = canvas.clientWidth, h = canvas.clientHeight;
       return {x: (a.x + 1) / 2 * w, y: (1 - a.y) / 2 * h, w: Math.abs(b.x - a.x) / 2 * w * 1.41}; },
-    pick(cx, cy) { setRay(cx, cy); if (!ray.ray.intersectPlane(ground, hit)) return -1; const q = Math.floor(hit.x + N / 2), r = Math.floor(hit.z + HT / 2); return q >= 0 && r >= 0 && q < N && r < HT ? r * N + q : -1; },
+    pick(cx, cy) { setRay(cx, cy); if (!ray.ray.intersectPlane(ground, hit)) return -1; const o = off(active), q = Math.floor(hit.x - o.x + N / 2), r = Math.floor(hit.z - o.z + HT / 2); return q >= 0 && r >= 0 && q < N && r < HT ? r * N + q : -1; },
     pickContainer(cx, cy) { setRay(cx, cy); const list = []; for (const [key, c] of creatures) if (c.visible) c.userData.boxes.forEach((b, j) => b.visible && list.push(Object.assign(b, {_key: key, _j: j}))); const h = ray.intersectObjects(list, false)[0]; return h ? {key: h.object._key, j: h.object._j} : null; },
-    setHover(cell) { if (cell == null || cell < 0) { hover.visible = false; return; } const p = cellCenter(cell % N, Math.floor(cell / N)); hover.position.x = p.x; hover.position.z = p.z; hover.visible = true; },
+    setHover(cell) { if (cell == null || cell < 0) { hover.visible = false; return; } const p = cellAt(cell); hover.position.x = p.x; hover.position.z = p.z; hover.visible = true; },
     // items: [{key, kind, len, cells (sorted), vertical, hits: [segment idx], sunk, fresh, seed, labels}] — anything not listed is hidden
     // Swap oceans in-world: the camera glides sideways (dir +1 = the board leaves to the left), mid() swaps what is shown
     // while the board is out of view, and the camera glides back in from the other side. Resolves when it has settled.
@@ -490,13 +524,13 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
     syncCreatures(items) {
       const live = new Set();
       for (const it of items) {
-        live.add(it.key); const sig = it.cells.join(',') + '|' + it.kind;
+        live.add(it.key); const sig = it.cells.join(',') + '|' + it.kind + '|' + (it.board || '');
         let c = creatures.get(it.key);
         if (!c || c.userData.sig !== sig) {
           if (c) scene.remove(c);
           c = it.kind === 'berg' ? buildIceberg(it.seed) : buildCreature(it.kind, it.len, it.seed, it.labels); c.userData.sig = sig;
           if (it.kind === 'berg') { c.scale.setScalar(.42); c.userData.boxes = []; c.userData.gone = new Set(); const u = c.userData.update; c.userData.update = (t) => u(t); c.userData.knockOff = () => {}; c.userData.sinkNow = () => {}; c.userData.spout = () => {}; }
-          const a = cellCenter(it.cells[0] % N, Math.floor(it.cells[0] / N)), b = cellCenter(it.cells[it.cells.length - 1] % N, Math.floor(it.cells[it.cells.length - 1] / N));
+          const a = cellAt(it.cells[0], it.board), b = cellAt(it.cells[it.cells.length - 1], it.board);
           c.position.set((a.x + b.x) / 2, 0, (a.z + b.z) / 2); c.rotation.y = it.vertical ? -Math.PI / 2 : 0; scene.add(c); creatures.set(it.key, c); c.userData.seen = false;
         }
         c.visible = true;
@@ -506,24 +540,24 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
       }
       for (const [key, c] of creatures) if (!live.has(key)) c.visible = false;
     },
-    splash(cell, kind) {   // kind: 'miss' | 'hit' | 'sunk' | 'decoy'
-      const p = cellCenter(cell % N, Math.floor(cell / N)), hit = kind === 'hit' || kind === 'sunk';
+    splash(cell, kind, key = active) {   // kind: 'miss' | 'hit' | 'sunk' | 'decoy'
+      const p = cellAt(cell, key), hit = kind === 'hit' || kind === 'sunk';
       if (hit) { const fb = fireballs.find(f => f.t >= 1) || fireballs[0]; fb.t = 0; fb.big = kind === 'sunk'; fb.s.position.set(p.x, .45, p.z); fb.s.visible = true; }
       burst(p.x, p.z, hit ? '#ffb35c' : kind === 'decoy' ? '#c9a7ff' : '#eaf8ff', kind === 'sunk' ? 1.4 : hit ? 1.1 : .8);
       ring(p.x, p.z, hit ? '#ffcf8a' : '#ffffff', 0, kind === 'sunk' ? 7 : 4, 1.1); ring(p.x, p.z, '#ffffff', .18, kind === 'sunk' ? 5 : 2.6, 1);
       if (kind === 'sunk') ring(p.x, p.z, '#bff3ff', .4, 9, 1.6);
     },
     // fire a glowing packet from one cell to another; resolves on impact
-    launch(fromCell, toCell, {color = '#23e4d0', dur = 1.4} = {}) {
+    launch(fromCell, toCell, {color = '#23e4d0', dur = 1.4, from: fk = active, to: tk = active} = {}) {
       return new Promise(resolve => { const p = packets.find(p => p.t >= 2) || packets[0];
-        const a = cellCenter(fromCell % N, Math.floor(fromCell / N)), b = cellCenter(toCell % N, Math.floor(toCell / N));
-        p.from.copy(a); p.to.copy(b); p.h = Math.min(6, 1.6 + a.distanceTo(b) * .32); p.dur = dur; p.t = 0; p.n = 0; p.done = resolve;
+        const a = cellAt(fromCell, fk), b = cellAt(toCell, tk);
+        p.from.copy(a); p.to.copy(b); p.h = Math.min(fk === tk ? 6 : 9, 1.6 + a.distanceTo(b) * .32); p.dur = dur; p.t = 0; p.n = 0; p.done = resolve;
         p.core.material.color.set(color); p.core.material.emissive.set(color); p.glow.material.color.set(color); p.trail.material.color.set(color); p.trail.material.opacity = .85; p.g.visible = p.trail.visible = true; });
     },
     // kind: 'breach' | 'tail' | 'grab' — resolves at the moment of impact
     stunt(cell, kind, rot = 0) {
       return new Promise(resolve => {
-        const c = cellCenter(cell % N, Math.floor(cell / N)), m = kind === 'grab' ? buildCreature(4, 3, 11, ['haproxy', 'envoy']) : buildCreature(0, 4, 13, ['nginx', 'redis', 'postgres', 'alpine']);
+        const c = cellAt(cell), m = kind === 'grab' ? buildCreature(4, 3, 11, ['haproxy', 'envoy']) : buildCreature(0, 4, 13, ['nginx', 'redis', 'postgres', 'alpine']);
         m.rotation.y = -rot * Math.PI / 2 + (kind === 'tail' ? Math.PI : 0); scene.add(m); m.position.copy(c);
         let hitDone = false; const impact = (big) => { if (hitDone) return; hitDone = true; api.splash(cell, big ? 'sunk' : 'hit'); resolve(); };
         const step = kind === 'breach' ? t => { const u = Math.min(1, t / 1.5); m.position.y = -1.4 + 4.2 * u - 4.4 * u * u; m.rotation.z = -1 + 2.1 * u; if (u > .82) impact(true); }
@@ -532,15 +566,16 @@ export function createWorld(canvas, {quality = 'medium'} = {}) {
         stunts.push({m, t: 0, dur: kind === 'breach' ? 1.7 : 1.6, step});
       });
     },
-    scanFx(cell) { const p = cellCenter(cell % N, Math.floor(cell / N)), w = sweeps.find(w => w.t >= 1) || sweeps[0]; w.m.position.set(p.x, .13, p.z); w.t = 0; w.m.visible = true;
+    scanFx(cell) { const p = cellAt(cell), w = sweeps.find(w => w.t >= 1) || sweeps[0]; w.m.position.set(p.x, .13, p.z); w.t = 0; w.m.visible = true;
       for (let i = 0; i < 3; i++) ring(p.x, p.z, '#23e4d0', i * .25, 3.5, 1.1); },
     // packet flood: red packets pour in from the horizon onto every cell of the diamond
-    floodFx(cell, area) { const c = cellCenter(cell % N, Math.floor(cell / N)), list = area.slice(0, 8);
-      return Promise.all(list.map((a, i) => new Promise(res => setTimeout(() => { const src = Math.max(0, Math.min(N * HT - 1, (i % 2 ? 0 : N - 1) + Math.floor(Math.random() * HT) * N)); api.launch(src, a, {color: '#ff5a2e', dur: .9}).then(() => { const q = cellCenter(a % N, Math.floor(a / N)); ring(q.x, q.z, '#ff8a5c', 0, 2.2, .7); res(); }); }, i * 70)))); },
+    floodFx(cell, area) { const c = cellAt(cell), list = area.slice(0, 8);
+      return Promise.all(list.map((a, i) => new Promise(res => setTimeout(() => { const src = Math.max(0, Math.min(N * HT - 1, (i % 2 ? 0 : N - 1) + Math.floor(Math.random() * HT) * N)); api.launch(src, a, {color: '#ff5a2e', dur: .9}).then(() => { const q = cellAt(a); ring(q.x, q.z, '#ff8a5c', 0, 2.2, .7); res(); }); }, i * 70)))); },
     // hit: squares currently burning (hit, not yet sunk) · sunk: smouldering wreck squares
-    setFires(hit, sunk) {
-      const spots = [...hit.map(c => ({c, big: true})), ...sunk.map(c => ({c, big: false}))].slice(0, FIRE_MAX);   // wrecks keep burning
-      fireSpots = spots.map(({c}) => cellCenter(c % N, Math.floor(c / N)));
+    setFires(hit, sunk, key = active) {
+      fireBy.set(key, [...hit.map(c => ({c, big: true, key})), ...sunk.map(c => ({c, big: false, key}))]);
+      const spots = [...fireBy.get(active) || [], ...[...fireBy].filter(([k]) => k !== active).flatMap(([, v]) => v)].slice(0, FIRE_MAX);   // wrecks keep burning; the board in view first
+      fireSpots = spots.map(({c, key}) => cellAt(c, key));
       fires.forEach((f, i) => { const sp = spots[i]; if (!sp) { f.s.visible = false; return; } const p = fireSpots[i]; f.s.position.set(p.x + (f.ph % 1 - .5) * .15, .12, p.z); f.big = sp.big; f.s.visible = true; });
       smoke.visible = fireSpots.length > 0;
     },

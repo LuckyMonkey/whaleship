@@ -494,7 +494,7 @@ function cellFromClient(cx, cy) {
 }
 
 /* ---------------- board: the plane canvas ---------------- */
-const plane = {ctx: null, w: 0, k: 1};
+const plane = {ctx: null, w: 0, k: 1}, planes = {home: {}, target: {}};
 function setSize(n) {
   if (n === SIZE && planeLife) return;
   SIZE = n; [N, HT] = dims(n); sel = -1; const b = $('#board');
@@ -507,7 +507,11 @@ function setSize(n) {
   for (let i = 0; i < N; i++) { const a = document.createElement('span'); a.textContent = show(i) ? colLabel(i) : ''; ax.append(a); }
   for (let i = 0; i < HT; i++) { const r = document.createElement('span'); r.textContent = show(i) ? i + 1 : ''; ay.append(r); }
   kb = -1; hover = -1; plane.w = 0; planeSig = '';
-  if (R3) { const cv = plane.cv ||= document.createElement('canvas'), px = Math.min(96, Math.floor(1536 / Math.max(N, HT))); cv.width = N * px; cv.height = HT * px; plane.w = cv.width; plane.k = 1; plane.ctx = cv.getContext('2d'); R3.setBoard(N, HT, cv); layout3D(); drawPlane(); return; }
+  if (R3) {   // one ocean (v0.21): both boards are painted and float side by side; the camera swings between them
+    const px = Math.min(96, Math.floor(1536 / Math.max(N, HT)));
+    for (const v of ['home', 'target']) { const cv = planes[v].cv ||= document.createElement('canvas'); cv.width = N * px; cv.height = HT * px; planes[v].ctx = cv.getContext('2d'); planes[v].sig = ''; }
+    plane.w = N * px; plane.k = 1; plane.ctx = planes[view].ctx; R3.setBoard(N, HT, {home: planes.home.cv, target: planes.target.cv}); R3.focus(view, 0); layout3D(); drawPlane(); return;
+  }
   sizePlane();
 }
 function sizePlane() {
@@ -521,8 +525,17 @@ function shotsFor(v) { const src = v === 'home' ? state?.me.shots : state?.oppon
 // 3D: the board canvas is uploaded to the GPU as a texture, so only redraw when something visible changed.
 let planeSig = '';
 function drawPlane() {
-  if (R3) { const sig = [view, state?.id, state?.revision, hidden.home.size, hidden.target.size, hiddenSunk.size, shownSonar, sel, kb, armed, rotN, [...targets], [...locked], area, previewCells?.cells, previewCells?.ok, SECT() ? '' : hover].join('|'); if (sig === planeSig) return; planeSig = sig; }
-  drawPlane2(); R3?.boardDirty();
+  if (!R3) { drawPlane2(); return; }
+  const other = view === 'home' ? 'target' : 'home', base = [state?.id, state?.revision, hidden.home.size, hidden.target.size, hiddenSunk.size, shownSonar, aimSeat, N];
+  const sig = [view, ...base, sel, kb, armed, rotN, [...targets], [...locked], area, previewCells?.cells, previewCells?.ok, SECT() ? '' : hover].join('|');
+  if (sig !== planes[view].sig) { planes[view].sig = sig; plane.ctx = planes[view].ctx; drawPlane2(); R3.boardDirty(view); }
+  const sig2 = [other, ...base].join('|');
+  if (sig2 !== planes[other].sig) {   // the board out of focus: its marks and fleet, none of the aiming overlays
+    planes[other].sig = sig2; const keep = {view, hover, kb, area, previewCells, sel}, lk = [...locked], tg = [...targets];
+    view = other; hover = -1; kb = -1; area = []; previewCells = null; sel = -1; locked.clear(); targets.clear(); plane.ctx = planes[other].ctx;
+    try { drawPlane2(); } finally { ({view, hover, kb, area, previewCells, sel} = keep); lk.forEach(c => locked.add(c)); tg.forEach(c => targets.add(c)); plane.ctx = planes[view].ctx; }
+    R3.boardDirty(other);
+  }
 }
 function drawPlane2() {
   const c = plane.ctx; if (!c || !N) return;
@@ -620,19 +633,23 @@ function traces() {
 /* ---------------- board: creatures (standing SVG cards) ---------------- */
 const shipCache = new Map();   // key → signature, so a card is only touched when something about it changed
 function clearShips() { shipCache.clear(); $('#board').querySelectorAll('.ship').forEach(e => e.remove()); }
-function render3D(shots) {
+function render3D() {
   const items = [];
-  if (state) {
-    const list = view === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}));
-    for (const s of list) {
-      const cells = [...s.cells].sort((a, b) => a - b), f = F(s.id), hits = cells.map((c, j) => (shots[c] || 0) >= 2 ? j : -1).filter(j => j >= 0);
-      const mf = (s.own ? state.me.manifest : state.opponent?.manifest)?.[s.id] || [];
-      items.push({key: `${view}:${s.id}`, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
+  for (const v of ['home', 'target']) {
+    const shots = shotsFor(v);
+    if (state) {
+      const list = v === 'home' ? state.me.ships.map(s => ({...s, own: true})) : (state.opponent?.sunk || []).filter(s => !hiddenSunk.has(s.id)).map(s => ({...s, own: false, sunk: true}));
+      const tag = v === 'target' && trioOn() ? 't' + aimSeat : v;
+      for (const s of list) {
+        const cells = [...s.cells].sort((a, b) => a - b), f = F(s.id), hits = cells.map((c, j) => (shots[c] || 0) >= 2 ? j : -1).filter(j => j >= 0);
+        const mf = (s.own ? state.me.manifest : state.opponent?.manifest)?.[s.id] || [];
+        items.push({key: `${tag}:${s.id}`, board: v, kind: f.kind % 5, len: cells.length, cells, vertical: isVertical(cells), hits, sunk: !!s.sunk || hits.length === cells.length, fresh: freshSink.has(s.id), seed: s.id, labels: mf.map(x => `${x.image}|${x.name}`)});
+      }
+      (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${v}:${cell}`, board: v, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
     }
-    (state.firewalls || []).forEach((cell, i) => items.push({key: `berg:${cell}`, kind: 'berg', len: 1, cells: [cell], seed: i + 1}));
+    const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells, v);
   }
   R3.syncCreatures(items);
-  const hitCells = [], sunkCells = []; shots.forEach((m, c) => { if (m === 2) hitCells.push(c); else if (m === 3) sunkCells.push(c); }); R3.setFires(hitCells, sunkCells);
 }
 function renderShips(shots) {
   if (R3) return render3D(shots);
@@ -691,6 +708,7 @@ function buildBoardEvents() {
   const b = R3 ? R3.canvas : $('#board');
   b.addEventListener('pointerdown', e => { lastPointer = e.pointerType; }, {capture: true});
   b.addEventListener('click', e => { if (suppressClick) { suppressClick = false; return; }
+    if (R3 && !sliding) { const hit = R3.pickAny(e.clientX, e.clientY); if (hit && hit.key !== view && !(deploying() && !state?.me.ready)) { slideTo(hit.key); return; } }
     if (R3 && state && view === 'home' && !armed && !(deploying() && !state.me.ready)) { const pc = R3.pickContainer(e.clientX, e.clientY); if (pc) { inspect(pc); return; } }
     const c = cellFromClient(e.clientX, e.clientY); if (c >= 0) tileTap(c); });
   b.addEventListener('keydown', e => {
@@ -881,15 +899,15 @@ function zoomGestures() {
 }
 
 /* ---------------- slide between oceans ---------------- */
-async function slideTo(v, dir) {
+async function slideTo(v, dir, msOverride = null) {
   if (v === view) { render(); return; }
   dir = dir || (v === 'target' ? 'left' : 'right');
   const w = R3 ? R3.canvas : $('#board-wrap');
   if (settings.reduced || document.hidden || sliding) { view = v; render(); return; }
-  if (R3) {   // 3D: the camera crosses the ocean; the canvas never moves or fades, so nothing behind it can flash through
-    sliding = true; const ms = settings.fast ? 320 : 540, swap = () => { view = v; render(); };
-    await Promise.race([R3.swap(dir === 'left' ? 1 : -1, swap, ms), sleep(ms * 3 + 300)]);
-    R3.swapEnd(); sliding = false; render(); return;
+  if (R3) {   // one ocean: both boards are always there; the camera swings across the channel to the other one
+    sliding = true; const ms = msOverride ?? (settings.fast ? 420 : 760); view = v; render();
+    if (Math.random() < .3) audio.sound('gull');
+    await Promise.race([R3.focus(v, ms), sleep(ms + 400)]); sliding = false; render(); return;
   }
   // one smooth move: a short slide that fades fully out, the swap while nothing shows, then a gentle slide in (no overshoot)
   sliding = true; const ms = settings.fast ? 140 : 230, out = dir === 'left' ? -1 : 1;
@@ -1099,9 +1117,13 @@ async function playNext() {
     } else { fxText(p, 'SCANNED', '#ff9a7c'); log(`${ts()} ⚠ ENEMY NETWORK ACTIVITY: port scan around ${lc(a.cell)}`, 'error'); }
     await sleep(fast ? 300 : 700);
   } else {
-    if (view !== to) { audio.sound('launch', incoming); await slideTo(to, incoming ? 'right' : 'left'); }
-    await ensureVisible(g.map(x => x.cell));
-    const T = fast ? 650 : 1000, center = power ? g[Math.floor(g.length / 2)] : null, shots = power ? [center] : g;
+    // one ocean: the camera starts on the fleet that fires and swings across the channel with its packets
+    const cross = !!R3 && !(trioOn() && a.seat !== state.seat && !incoming), T = fast ? 650 : 1000;
+    if (cross) { if (view !== from) await slideTo(from, null, fast ? 240 : 380); }
+    else if (view !== to) { audio.sound('launch', incoming); await slideTo(to, incoming ? 'right' : 'left'); }
+    if (!cross) await ensureVisible(g.map(x => x.cell));
+    let swing = null;
+    const center = power ? g[Math.floor(g.length / 2)] : null, shots = power ? [center] : g;
     const color = incoming ? '#ff8a5c' : power === 'depth' || power === 'flood' ? '#ff5a2e' : power === 'tail' || power === 'trace' ? '#8ab4ff' : power === 'oom' ? '#ff3b6b' : '#23e4d0';
     if (power === 'oom' && !settings.reduced) { const sh = (incoming ? state.me.ships : state.opponent?.sunk || []).find(s => s.cells.includes(g[0].cell)); kernelPanic(sh ? POD(sh.id) : null, incoming); }
     const geom = geo();
@@ -1110,10 +1132,12 @@ async function playNext() {
       audio.sound(i === 0 ? (power === 'depth' ? 'depth' : 'launch') : 'packet', incoming);
       const e = cellPoint(x.cell, geom), s = {x: e.x + (i - (shots.length - 1) / 2) * 24, y: incoming ? -30 : FX.h + 30};
       if (power === 'depth' || power === 'flood') return fxFlood(s, e, T);
+      if (R3 && cross) { const flight = R3.launch(x.cell, x.cell, {color, dur: (T + 500) / 1000, from, to}); if (i === 0) swing = slideTo(to, null, T + 350); return flight; }   // across the channel
       if (R3) return R3.launch(edgeCell(x.cell), x.cell, {color, dur: T / 1000});   // a glowing 3D packet with a light trail
       return fly(s, e, T, {color, glyph: power === 'tail' || power === 'trace' ? '🛰️' : power === 'oom' ? '💀' : power === 'chaos' ? '☸️' : incoming ? '🚀' : '📨', hops: power === 'tail' || power === 'trace', to: `${coord(x.cell)} ${ip(x.cell, !incoming)}`});
     }));
-    await Promise.all(flights);
+    await Promise.all(flights); if (swing) await swing;
+    if (cross) await ensureVisible(g.map(x => x.cell));
     if (power === 'tail') { const g2 = geo(); g.forEach((x, i) => fxText(cellPoint(x.cell, g2), `hop ${i + 1}`, '#8ab4ff', 12, 900, i * 70)); audio.sound('tail'); await sleep(fast ? 120 : 260); }
     const lock = fxLock(cellPoint(g[0].cell)); await sleep(fast ? 140 : 320); lock.kill = true;
     for (const x of g) { await resolveStrike(x, incoming, g.length > 1); if (g.length > 1) await sleep(fast ? 50 : 120); }

@@ -9,6 +9,15 @@
 - A slim player: play/pause, a slider to any move, **1×/2×**, 🔗 copy the link, ✕ leave. Keys: space, ← → a turn, Esc.
 - Only **finished** battles replay (a replay shows both fleets). Restores, decoys and 3-captain battles play back too.
 
+**One ocean.** Your waters and theirs now float on the same sea, side by side, with open water and Conway foam in the
+channel between them (3D; the 2D board is unchanged).
+
+- Switching between them **swings the camera** across the channel (ease in and out, with a slight pull-back mid-way)
+  instead of cutting away. Tap the other board to go to it.
+- **Packets arc across the channel:** a volley lifts off from the fleet that fires, the camera follows it over the
+  water, and lands on the target board as the splashes come in.
+- **Seagulls:** one cries now and then over the water, and sometimes as the camera crosses.
+
 **A clean start.** No more dark, tilted half-built ocean (and every button at once) while the page loads.
 
 - A **loading curtain** is painted by the page itself before any stylesheet or script, with a progress line; it lifts

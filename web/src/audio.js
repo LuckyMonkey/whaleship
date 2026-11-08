@@ -73,6 +73,25 @@ function beat() {
     if (s % 16 === 0) tone(55, 1.8, 'sawtooth', .07, music, 0, 55, 0, 0); }
   // now and then, a whale sings somewhere far away
   if (--songTimer <= 0) { songTimer = Math.round(rnd(100, 220)); whaleCall(undefined, .05, rnd(-.8, .8), ambient); }
+  // and a gull wheels overhead
+  if (--gullTimer <= 0) { gullTimer = Math.round(rnd(140, 360)); gull(.05, rnd(-.9, .9), ambient); }
+}
+let gullTimer = 60;
+// a herring gull's "kee-ow": a raspy rising-then-falling cry (sawtooth through a vocal-tract bandpass, fast vibrato for
+// the rasp), two or three calls each a little lower and softer
+function gull(gain = .09, pan = rnd(-.6, .6), dest = effects) {
+  if (!enabled || !ctx) return;
+  const calls = 2 + (Math.random() < .5 ? 1 : 0);
+  for (let i = 0; i < calls; i++) {
+    const t = now() + i * rnd(.32, .42), f0 = rnd(1250, 1450) * (1 - i * .06), d = rnd(.26, .34);
+    const o = ctx.createOscillator(), lfo = ctx.createOscillator(), lg = ctx.createGain(), bp = ctx.createBiquadFilter(), bp2 = ctx.createBiquadFilter(), v = ctx.createGain();
+    o.type = 'sawtooth'; o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * 1.45, t + d * .22); o.frequency.exponentialRampToValueAtTime(f0 * .72, t + d);
+    lfo.frequency.value = rnd(26, 34); lg.gain.value = f0 * .035; lfo.connect(lg).connect(o.frequency);
+    bp.type = 'bandpass'; bp.frequency.value = 2300; bp.Q.value = 2.2; bp2.type = 'bandpass'; bp2.frequency.value = 3600; bp2.Q.value = 3;
+    v.gain.setValueAtTime(.0001, t); v.gain.exponentialRampToValueAtTime(gain * (1 - i * .2), t + .03); v.gain.setValueAtTime(gain * (1 - i * .2), t + d * .5); v.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(bp).connect(v); o.connect(bp2).connect(v); out(v, dest, pan, .35);
+    o.start(t); lfo.start(t); o.stop(t + d + .05); lfo.stop(t + d + .05);
+  }
 }
 
 export async function enable(value) {
@@ -124,6 +143,7 @@ export function sound(kind, incoming = false) {
     case 'victory': [261.63, 329.63, 392, 523.25, 659.25].forEach((f, i) => tone(f, .55, 'triangle', .09, effects, 0, f, i * .11, .4)); setTimeout(() => whaleCall('whoop', .14, 0), 700); break;
     case 'defeat': [196, 185, 164.81, 130.81].forEach((f, i) => tone(f, .6, 'sawtooth', .07, effects, 0, f * .97, i * .17, .4)); setTimeout(() => whaleCall('moan', .16, 0), 600); break;
     case 'error': tone(140, .14, 'square', .05, effects, 0, 140, 0, 0); tone(110, .16, 'square', .04, effects, 0, 110, .1, 0); break;
+    case 'gull': gull(); break;
     case 'join': tone(440, .12, 'triangle', .07); tone(660, .2, 'triangle', .07, effects, 0, 660, .1); break;
     case 'copy': tone(700, .08, 'triangle', .05); tone(1050, .1, 'triangle', .05, effects, 0, 1050, .08); break;
     case 'place': noise(.2, .25, {freq: 1600, type: 'bandpass', q: .6, attack: .004, wet: .2}); bubbles(3, .05, .2); break;
